@@ -1,0 +1,39 @@
+# =============================================================================
+# ANTIGRAVITY TELEGRAM BRIDGE - GITIGNORE
+# =============================================================================
+
+# 1. Credenciales y Archivos de Configuración Privados
+.env
+.env.*
+!.env.example
+*.env.local
+
+# 2. Estado Persistente de la Máquina Local
+bot_state.json
+state.json
+*.jsonl
+
+# 3. Archivos Temporales de la IA, Diffs y Descargas
+temp_media/
+scratch/
+*.diff
+*.patch
+*.txt
+*.zip
+*.tar.gz
+
+# 4. Caché de Python
+__pycache__/
+*.py[cod]
+*.class
+.pytest_cache/
+
+# 5. Logs y Diagnósticos
+*.log
+*.log.*
+logs/
+
+# 6. Entornos Virtuales
+venv/
+.venv/
+env/

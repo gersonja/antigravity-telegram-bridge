@@ -126,7 +126,7 @@ ANTIGRAVITY_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
 ANTIGRAVITY_USER_ID=123456789
 
 # Rutas de tus repositorios
-ANTIGRAVITY_WORKSPACE_ROOTS=C:\MisProyectos,C:\NexusGate
+ANTIGRAVITY_WORKSPACE_ROOTS=C:\MisProyectos,D:\Proyectos
 ANTIGRAVITY_DEFAULT_PROJECT=C:\MisProyectos\MiApp
 
 # Configuración de IA y automatización

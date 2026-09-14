@@ -1,12 +1,12 @@
 # Guía Maestra Antigravity Mobile Remote (Telegram Bridge)
 **Control Remoto Autónomo y Seguro de Antigravity IDE/CLI desde el Celular en Movilidad (Quito)**  
-*Especialmente optimizado para laptops Lenovo con 8 GB RAM (Intel 11va Gen - Windows 11)*
+*Especialmente optimizado para laptops y equipos con 8 GB RAM (Windows 10/11)*
 
 ---
 
 ## 1. Introducción y Arquitectura de la Solución
 
-Operar una laptop en el transporte público de Quito (Trolebús, Ecovía, corredores o buses urbanos) representa un alto riesgo de asalto u oportunidad si el equipo se expone a la vista. La solución más ergonómica, discreta y segura es transformar tu celular en una **consola de mando móvil** mediante **Telegram**, mientras tu laptop Lenovo permanece en casa: conectada a la corriente, con la tapa cerrada, refrigerada y segura.
+Operar una laptop en el transporte público de Quito (Trolebús, Ecovía, corredores o buses urbanos) representa un alto riesgo de asalto u oportunidad si el equipo se expone a la vista. La solución más ergonómica, discreta y segura es transformar tu celular en una **consola de mando móvil** mediante **Telegram**, mientras tu laptop o equipo principal permanece en casa u oficina: conectada a la corriente, con la tapa cerrada, refrigerada y segura.
 
 ### El Reto de los 8 GB de RAM
 Una laptop con 8 GB de RAM no tiene margen para levantar herramientas pesadas de escritorio remoto (como AnyDesk, TeamViewer o RustDesk) ni instancias completas de VS Code Web en el navegador, las cuales consumen entre **1.5 GB y 3 GB** exclusivamente en interfaces gráficas de Electron y túneles WebSockets.
@@ -22,7 +22,7 @@ Esta arquitectura utiliza un **puente asíncrono en Python (`python-telegram-bot
                             ↕
          (Long Polling seguro - sin abrir puertos ni IP pública)
                             ↕
-     [ Laptop Lenovo en Casa (8 GB RAM - Windows 11) ]
+     [ Laptop / Host Remoto en Casa (8 GB RAM - Windows 11) ]
      ┌────────────────────────────────────────────────────────┐
      │  1. Windows Background Service (pythonw.exe ~40MB)    │
      │  2. Gestor Multi-Proyecto (Workspace Switcher)         │
@@ -40,7 +40,8 @@ Esta arquitectura utiliza un **puente asíncrono en Python (`python-telegram-bot
 
 ---
 
-## 2. Preparación de la Laptop Lenovo (Dejarla "Activa y Despierta")
+## 2. Preparación del Host / Laptop Remota (Dejarla "Activa y Despierta")
+
 
 Para que el servidor local responda 24/7 sin desconexiones, Windows debe configurarse para no suspenderse con la tapa cerrada:
 
@@ -74,12 +75,13 @@ A diferencia de los servicios tradicionales de Windows (`services.msc`) o tareas
 ### Scripts de Gestión:
 - **Instalar / Iniciar servicio:**
   ```powershell
-  pwsh -File "C:\proyectos2026\antigravity-telegram-bridge\install_bot_service.ps1"
+  pwsh -File ".\install_bot_service.ps1"
   ```
 - **Desinstalar / Detener servicio:**
   ```powershell
-  pwsh -File "C:\proyectos2026\antigravity-telegram-bridge\uninstall_bot_service.ps1"
+  pwsh -File ".\uninstall_bot_service.ps1"
   ```
+
 
 ---
 
@@ -161,10 +163,11 @@ Permite un flujo de trabajo 100% manos libres en movilidad. Cuando está activad
 - Tras enviar cambios con commit/push, puedes pulsar `[ 👁️ Vigilar Fin de Deploy ]`. El bot consultará periódicamente la API de GitHub Actions (`gh run list`) e informará al instante si el despliegue pasó con éxito (`success`) o si falló (`failure`).
 
 ### 🔋 Monitor de Cortes de Luz y Batería (Watchdog en Segundo Plano)
-- Mediante llamadas de bajo nivel a la API Win32 de Windows (`GetSystemPowerStatus`), el bot vigila continuamente el estado de alimentación de la Lenovo:
+- Mediante llamadas de bajo nivel a la API Win32 de Windows (`GetSystemPowerStatus`), el bot vigila continuamente el estado de alimentación del equipo:
   - **Alerta de Corte Eléctrico:** Si la laptop se desconecta del cargador o hay un corte de luz en el domicilio, el bot te envía de inmediato una alerta de emergencia a Telegram indicando que el equipo pasó a batería y el % restante.
   - **Alerta de Energía Restaurada:** Cuando la electricidad regresa o el cargador se conecta, te notifica que la red eléctrica fue restaurada.
   - Consulta manual de autonomía con `/battery` o desde el botón `[ 🔋 Batería ]`.
+
 
 ### 📸 Diagnóstico Multimodal por Imagen
 - Puedes enviar directamente fotos o capturas de pantalla de la interfaz o de errores visuales a Telegram acompañadas de un pie de foto (ej: *"Corrige este botón desalineado"* o *"¿Por qué sale este error en pantalla?"*).

@@ -69,16 +69,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 def load_dotenv_custom(env_path: Optional[str] = None) -> Optional[str]:
     r"""
     Carga variables de entorno desde un archivo .env si existe, sin dependencias externas.
-    Busca en el path especificado, en la carpeta del script, en C:\proyectos2026\antigravity-telegram-bridge, o en el cwd.
+    Busca en el path especificado, en la carpeta del script, o en el directorio de trabajo actual.
     """
     candidates = []
     if env_path:
         candidates.append(env_path)
     candidates.extend([
         os.path.join(BASE_DIR, ".env"),
-        os.path.expanduser(r"C:\proyectos2026\antigravity-telegram-bridge\.env"),
         os.path.join(os.getcwd(), ".env"),
-        os.path.expanduser(r"C:\remote_bot\.env"),
     ])
 
     for p in candidates:
@@ -110,10 +108,10 @@ BOT_TOKEN = os.environ.get("ANTIGRAVITY_BOT_TOKEN", "").strip()
 raw_uid = os.environ.get("ANTIGRAVITY_USER_ID", "").strip()
 MY_USER_ID = int(raw_uid) if raw_uid.isdigit() else 0
 
-raw_roots = os.environ.get("ANTIGRAVITY_WORKSPACE_ROOTS", r"C:\NexusGate,C:\proyectos2026")
+raw_roots = os.environ.get("ANTIGRAVITY_WORKSPACE_ROOTS", BASE_DIR)
 WORKSPACE_ROOTS = [os.path.expanduser(p.strip()) for p in re.split(r"[,;]", raw_roots) if p.strip()]
 
-DEFAULT_PROJECT = os.environ.get("ANTIGRAVITY_DEFAULT_PROJECT", r"C:\NexusGate")
+DEFAULT_PROJECT = os.environ.get("ANTIGRAVITY_DEFAULT_PROJECT", BASE_DIR)
 STATE_FILE = os.environ.get(
     "ANTIGRAVITY_STATE_FILE",
     os.path.join(BASE_DIR, "bot_state.json")
@@ -126,8 +124,9 @@ DEFAULT_AUTOPUSH = os.environ.get("ANTIGRAVITY_DEFAULT_AUTOPUSH", "false").lower
 
 WATCHDOG_ENABLED = os.environ.get("ANTIGRAVITY_WATCHDOG_ENABLED", "true").lower() in ("true", "1", "yes")
 WATCHDOG_INTERVAL = int(os.environ.get("ANTIGRAVITY_WATCHDOG_INTERVAL", "45"))
-DEFAULT_HEALTH_URL = os.environ.get("ANTIGRAVITY_DEFAULT_HEALTH_URL", "https://nexusgates.app")
+DEFAULT_HEALTH_URL = os.environ.get("ANTIGRAVITY_DEFAULT_HEALTH_URL", "https://google.com")
 TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_TASK_TIMEOUT", "300"))
+
 
 # Rutas de Antigravity en Windows
 CLI_DB_PATH = os.path.expanduser(r"~\.gemini\antigravity-cli\conversation_summaries.db")
@@ -406,7 +405,8 @@ def sync_ide_sessions(limit: int = 20):
 
             # Extraer workspace real
             ws_uri = extract_workspace_from_db(path)
-            workspace_json = json.dumps([ws_uri]) if ws_uri else '["file:///c:/NexusGate"]'
+            workspace_json = json.dumps([ws_uri]) if ws_uri else json.dumps([f"file:///{BASE_DIR.replace('\\', '/')}"])
+            project_tag = Path(ws_uri.replace("file:///", "")).name.lower() if ws_uri else "project"
 
             # Sincronizar archivo .db si falta
             cli_db = os.path.join(CLI_CONV_DIR, name)
@@ -434,9 +434,10 @@ def sync_ide_sessions(limit: int = 20):
             """
             cursor.execute(query, (
                 cid, display_title, preview_prompt, 10, dt_str, workspace_json,
-                "active", "ide", "nexusgate", "antigravity", "", 0,
+                "active", "ide", project_tag, "antigravity", "", 0,
                 "", "", 0, 0, dt_str, 1, "antigravity-cli", None, ""
             ))
+
 
         conn.commit()
         conn.close()
@@ -519,12 +520,8 @@ def query_sessions(limit: int = 8, project_filter: Optional[str] = None) -> List
             
             # Filtro estricto por proyecto
             uris_str = str(uris).lower() if uris else ""
-            is_match = (proj_clean in uris_str) if proj_clean and uris_str else False
+            is_match = (proj_clean in uris_str) if proj_clean and uris_str else (not proj_clean)
 
-            # Si no hay uris explícitas y estamos en NexusGate (default), se permite si no es de otro repo conocido
-            if not is_match and proj_clean == "nexusgate":
-                if not any(other in uris_str for other in ["nextlaboratory", "ecommerce", "urbysystem", "stream-waha"]):
-                    is_match = True
 
             if is_match:
                 sessions.append({
@@ -1374,7 +1371,7 @@ def build_branches_view() -> Tuple[str, InlineKeyboardMarkup]:
     return text, InlineKeyboardMarkup(kb)
 
 async def power_watchdog_task(app):
-    """Monitorea el estado de energía de la Lenovo y alerta proactivamente si hay corte de luz."""
+    """Monitorea el estado de energía del equipo host y alerta proactivamente si hay corte de luz."""
     if not WATCHDOG_ENABLED:
         print("[Watchdog] Desactivado según configuración ANTIGRAVITY_WATCHDOG_ENABLED.")
         return
@@ -1393,17 +1390,18 @@ async def power_watchdog_task(app):
                         mins_left = f" (~{secs // 60} minutos estimados)" if secs > 0 else ""
                         msg = (
                             f"⚠️ *¡ALERTA DE ENERGÍA / CORTE DE LUZ!*\n"
-                            f"El portátil Lenovo ahora está funcionando con *BATERÍA* 🔋 (`{pct}%`).{mins_left}\n"
+                            f"El equipo remoto ahora está funcionando con *BATERÍA* 🔋 (`{pct}%`).{mins_left}\n"
                             f"El cargador se desconectó o la red eléctrica se interrumpió."
                         )
                         await app.bot.send_message(chat_id=MY_USER_ID, text=msg, parse_mode=constants.ParseMode.MARKDOWN)
                     elif last_ac == 0 and curr_ac == 1:
                         msg = (
                             f"⚡ *¡ENERGÍA ELÉCTRICA RESTAURADA!*\n"
-                            f"El portátil Lenovo vuelve a estar conectado a la *RED ELÉCTRICA* (AC).\n"
+                            f"El equipo remoto vuelve a estar conectado a la *RED ELÉCTRICA* (AC).\n"
                             f"Nivel actual de batería: 🔋 `{pct}%`."
                         )
                         await app.bot.send_message(chat_id=MY_USER_ID, text=msg, parse_mode=constants.ParseMode.MARKDOWN)
+
 
                 if curr_ac in (0, 1):
                     last_ac = curr_ac
@@ -1872,7 +1870,7 @@ async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_reply_message(msg_target, text, reply_markup=InlineKeyboardMarkup(kb))
 
 async def cmd_battery(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra el estado de la batería y alimentación AC de la Lenovo."""
+    """Muestra el estado de la batería y alimentación AC del host remoto."""
     if not is_authorized(update):
         return
     msg_target = update.effective_message
@@ -1898,7 +1896,8 @@ async def cmd_battery(update: Update, context: ContextTypes.DEFAULT_TYPE):
     time_str = f"{secs // 60} minutos restantes" if secs > 0 else ("Ilimitado (Conectado a corriente)" if ac == 1 else "Calculando...")
 
     text = (
-        f"🔋 *Monitor de Energía del Servidor (Lenovo)*\n"
+        f"🔋 *Monitor de Energía del Servidor (Host Remoto)*\n"
+
         f"──────────────────────────────\n"
         f"{icon} *Fuente:* {ac_label}\n"
         f"📊 *Nivel de Batería:* `{pct}%`\n"
@@ -2199,7 +2198,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ac_label = "⚡ Enchufado a la Red (AC)" if ac == 1 else ("🔋 Batería (Desconectado)" if ac == 0 else "Desconocido")
             time_str = f"{secs // 60} minutos restantes" if secs > 0 else ("Ilimitado (Conectado a corriente)" if ac == 1 else "Calculando...")
             text = (
-                f"🔋 *Monitor de Energía del Servidor (Lenovo)*\n"
+                f"🔋 *Monitor de Energía del Servidor (Host Remoto)*\n"
+
                 f"──────────────────────────────\n"
                 f"🔌 *Fuente:* {ac_label}\n"
                 f"📊 *Nivel de Batería:* `{pct}%`\n"

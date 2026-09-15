@@ -119,7 +119,7 @@ STATE_FILE = os.environ.get(
 if not os.path.exists(os.path.dirname(STATE_FILE)):
     os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
 
-DEFAULT_MODEL = os.environ.get("ANTIGRAVITY_DEFAULT_MODEL", "gemini-3.8-flash-high")
+DEFAULT_MODEL = os.environ.get("ANTIGRAVITY_DEFAULT_MODEL", "auto")
 DEFAULT_AUTOPUSH = os.environ.get("ANTIGRAVITY_DEFAULT_AUTOPUSH", "false").lower() in ("true", "1", "yes")
 
 WATCHDOG_ENABLED = os.environ.get("ANTIGRAVITY_WATCHDOG_ENABLED", "true").lower() in ("true", "1", "yes")
@@ -141,13 +141,47 @@ IDE_CONV_DIR = os.path.expanduser(r"~\.gemini\antigravity-ide\conversations")
 IDE_BRAIN_DIR = os.path.expanduser(r"~\.gemini\antigravity-ide\brain")
 
 AVAILABLE_MODELS = {
-    "gemini-3.8-flash-high": "⚡ Gemini 3.8 Flash High (Recomendado)",
+    "auto": "🎯 Auto-Router Inteligente (Recomendado)",
+    "gemini-3.8-flash-high": "⚡ Gemini 3.8 Flash High",
     "gemini-3.8-flash-medium": "🚀 Gemini 3.8 Flash Medium",
     "gemini-3.7-flash-high": "💡 Gemini 3.7 Flash High",
     "claude-sonnet-4-6": "🧠 Claude Sonnet 4.6 (Thinking)",
     "claude-opus-4-6-thinking": "🏛️ Claude Opus 4.6 (Thinking)",
     "gpt-oss-120b-medium": "🌐 GPT-OSS 120B",
 }
+
+def resolve_model(prompt: str, selected_model: str) -> Tuple[str, str]:
+    """
+    Determina el modelo efectivo a utilizar por Antigravity CLI.
+    Si selected_model == 'auto', clasifica semánticamente el prompt:
+      - Consultas, UI, CSS, ajustes puntuales, git, formateo -> gemini-3.8-flash-medium (Ultrarrápido)
+      - Arquitectura, refactorizaciones, migraciones, debugging complejo, planes -> gemini-3.8-flash-high (Profundo)
+    Retorna (effective_model_id, badge_for_telegram).
+    """
+    if selected_model != "auto":
+        label = AVAILABLE_MODELS.get(selected_model, selected_model)
+        badge = label.split(" ")[1] if " " in label else selected_model
+        return selected_model, badge
+
+    p_lower = prompt.lower()
+    deep_keywords = [
+        "arquitectura", "architecture", "refactor", "refactoriz",
+        "migra", "database", "esquema", "sql", "postgres",
+        "concurrencia", "deadlock", "seguridad", "vulnerab",
+        "auditor", "sad path", "plan de", "implementation_plan",
+        "revisa todo", "analiza todo", "investiga", "reestructura",
+        "optimiza el rendimiento", "memory leak", "fuga de memoria",
+        "backend", "api rest", "autenticacion", "oauth"
+    ]
+
+    deep_score = sum(1 for kw in deep_keywords if kw in p_lower)
+
+    # Si el prompt es muy largo (> 500 caracteres) o tiene palabras clave de alta complejidad
+    if len(prompt) > 500 or deep_score >= 1:
+        return "gemini-3.8-flash-high", "🎯 Auto (⚡ High)"
+    
+    # Por defecto para tareas cotidianas de UI, CSS, fixes, consultas o git:
+    return "gemini-3.8-flash-medium", "🎯 Auto (🚀 Medium)"
 
 # =============================================================================
 # GESTOR DE ESTADO PERSISTENTE
@@ -760,9 +794,7 @@ async def execute_antigravity_task(
     """Ejecuta el CLI de Antigravity en segundo plano con telemetría en vivo y timeout dinámico por inactividad."""
     chat_id = update.effective_chat.id
     target_session = override_session_id if override_session_id is not None else state.active_session_id
-    current_model = state.model
-
-    model_badge = AVAILABLE_MODELS.get(current_model, current_model).split(" ")[1] if " " in AVAILABLE_MODELS.get(current_model, current_model) else current_model
+    effective_model, model_badge = resolve_model(prompt, state.model)
     session_badge = f"`{target_session[:8]}...`" if target_session else "✨ Nueva Sesión"
     proj_name = os.path.basename(os.path.normpath(state.current_project)) if state.current_project else "Sin Proyecto"
 
@@ -783,7 +815,7 @@ async def execute_antigravity_task(
         cmd_args += ["--conversation", target_session]
     
     cmd_args += [
-        "--model", current_model,
+        "--model", effective_model,
         "--print-timeout", "2h",
         "--dangerously-skip-permissions",
         "-p", prompt,
@@ -2396,10 +2428,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             state.model = selected_model
             state.save()
             label = AVAILABLE_MODELS.get(selected_model, selected_model)
-            await safe_edit_message(
-                query,
-                f"🤖 *Modelo de IA actualizado:*\n`{label}`\n\nTodas las siguientes órdenes se procesarán con este modelo.",
-            )
+            if selected_model == "auto":
+                desc = (
+                    f"🤖 *Modelo de IA actualizado:*\n`{label}`\n\n"
+                    f"🎯 *Auto-Router Activo:* Las órdenes se clasificarán automáticamente:\n"
+                    f"• *Gemini 3.8 Flash Medium:* Para UI, CSS, fixes, consultas o git (ultrarrápido).\n"
+                    f"• *Gemini 3.8 Flash High:* Para arquitectura, refactors y análisis profundo."
+                )
+            else:
+                desc = f"🤖 *Modelo de IA fijado:*\n`{label}`\n\nTodas las siguientes órdenes se procesarán exclusivamente con este modelo."
+            await safe_edit_message(query, desc)
 
         # Acciones de Plan
         elif data == "view_plan":

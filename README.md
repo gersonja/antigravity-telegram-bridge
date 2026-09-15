@@ -78,7 +78,12 @@ graph TD
 - Botones táctiles interactivos `[ 🔀 Cambiar a <Rama> ]` para alternar entre ramas al vuelo.
 - Creación rápida de ramas con `/branch <nombre>` (`git checkout -b`).
 
-### 7. 📸 Diagnóstico Multimodal por Imagen
+### 7. 🔍 Git Diff Inteligente y Rastreo de Archivos (`/diff`)
+- **Detección de Archivos Nuevos:** Utiliza internamente `git add -N .` para que los archivos recién creados por la IA se listen junto a los modificados.
+- **Soporte Transparente para Turbo AutoPush:** Si AutoPush ya commiteó los cambios de la interacción, el botón no queda vacío; inspecciona automáticamente el último commit (`git show --stat HEAD` y `git show -p HEAD`) mostrando los archivos cambiados y el bloque de código `diff`.
+- **Rastreo de Archivos por Sesión:** Extrae directamente de `transcript.jsonl` la lista de archivos que Antigravity ha manipulado con herramientas de edición en la sesión activa.
+
+### 8. 📸 Diagnóstico Multimodal por Imagen
 - Envía capturas de pantalla de bugs, interfaces desalineadas o fotos a Telegram.
 - El bot las descarga en alta resolución y las analiza con la visión multimodal de Antigravity.
 

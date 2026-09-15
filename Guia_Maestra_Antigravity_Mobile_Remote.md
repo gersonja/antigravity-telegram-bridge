@@ -167,6 +167,15 @@ Permite un flujo de trabajo 100% manos libres en movilidad. Cuando está activad
 - Si el repositorio está configurado con CI/CD (GitHub Actions), los cambios entran de inmediato al pipeline de pruebas y despliegue a la nube.
 - Puedes activarlo o desactivarlo en cualquier momento con `/autopush` o tocando el botón `[ ⚡ AutoPush: ON/OFF ]` en `/status`.
 
+### 🔍 Inspección Inteligente de Código y Diff Móvil (`/diff` y `[ 🔍 Ver Diff ]`)
+El comando y botón de diff cuentan con un motor dual que resuelve el problema de "árbol limpio" cuando se usan automatizaciones:
+- **Detección de Archivos Nuevos:** Utiliza internamente `git add -N .` para que cualquier archivo nuevo creado por la IA aparezca en el diff y no sea ignorado como archivo no rastreado (*untracked*).
+- **Soporte Transparente para Turbo AutoPush:** Cuando AutoPush está activo y commitea los cambios un segundo después de la respuesta, el árbol de trabajo queda limpio. En vez de devolver un mensaje en blanco o *"no hay cambios"*, el botón detecta este estado y extrae automáticamente los archivos y el diff exacto del **último commit** (`git show --stat HEAD` y `git show -p HEAD`).
+- **Rastreo de Archivos por Sesión:** Extrae directamente de `transcript.jsonl` la lista de archivos que Antigravity ha manipulado con herramientas de edición en la sesión activa.
+- **Envío Inteligente:**
+  - Cambios compactos: se muestran directamente en Telegram con bloque `diff` formateado.
+  - Cambios extensos: se envían como archivo adjunto `.diff` para inspeccionar con comodidad en tu lector móvil.
+
 ### 🌐 Monitoreo de URL Web (`/health`)
 - Comprueba la disponibilidad en vivo de tu aplicación web (configurable mediante `ANTIGRAVITY_DEFAULT_HEALTH_URL` en `.env` o pasando cualquier URL como argumento `/health <url>`).
 - Mide tiempo de respuesta en milisegundos, código HTTP y estado del servicio en tiempo real.

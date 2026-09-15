@@ -126,6 +126,10 @@ WATCHDOG_ENABLED = os.environ.get("ANTIGRAVITY_WATCHDOG_ENABLED", "true").lower(
 WATCHDOG_INTERVAL = int(os.environ.get("ANTIGRAVITY_WATCHDOG_INTERVAL", "45"))
 DEFAULT_HEALTH_URL = os.environ.get("ANTIGRAVITY_DEFAULT_HEALTH_URL", "https://google.com")
 TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_TASK_TIMEOUT", "300"))
+# Timeout por inactividad entre pasos: si no hay avance en este tiempo, se considera estancada
+STEP_IDLE_TIMEOUT = int(os.environ.get("ANTIGRAVITY_STEP_IDLE_TIMEOUT", "180"))
+# Límite global absoluto de seguridad para evitar tareas infinitas (30 min)
+MAX_TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_MAX_TASK_TIMEOUT", "1800"))
 
 
 # Rutas de Antigravity en Windows
@@ -198,9 +202,32 @@ def is_authorized(update: Update) -> bool:
     user = update.effective_user
     return user is not None and user.id == MY_USER_ID
 
+def kill_process_tree(pid: Optional[int]):
+    """Termina limpiamente un proceso y todo su árbol de procesos hijos (en Windows usa taskkill /F /T)."""
+    if not pid:
+        return
+    try:
+        if sys.platform == "win32":
+            creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                creationflags=creation_flags,
+            )
+        else:
+            os.kill(pid, 9)
+    except Exception as e:
+        print(f"[Kill Process Tree] Error terminando PID {pid}: {e}")
+
 def run_cmd(cmd: str, cwd: Optional[str] = None, timeout: int = 60) -> Tuple[int, str]:
     """Ejecuta un comando sincrónico rápido devolviendo (code, output)."""
     target_cwd = cwd if cwd else state.current_project
+    creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+    startupinfo = None
+    if sys.platform == "win32":
+        startupinfo = subprocess.STARTUPINFO()
+        startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startupinfo.wShowWindow = subprocess.SW_HIDE
     try:
         res = subprocess.run(
             cmd,
@@ -211,6 +238,8 @@ def run_cmd(cmd: str, cwd: Optional[str] = None, timeout: int = 60) -> Tuple[int
             timeout=timeout,
             encoding="utf-8",
             errors="replace",
+            creationflags=creation_flags,
+            startupinfo=startupinfo,
         )
         output = (res.stdout + "\n" + res.stderr).strip()
         return res.returncode, output
@@ -659,14 +688,15 @@ async def send_smart_message(
 # =============================================================================
 # EJECUCIÓN ASÍNCRONA DE ANTIGRAVITY (AGY CLI)
 # =============================================================================
-def get_live_execution_step(session_id: Optional[str]) -> str:
-    """Lee el último paso en transcript.jsonl para mostrar telemetría en vivo en Telegram."""
+def get_live_execution_step_and_mtime(session_id: Optional[str]) -> Tuple[str, float]:
+    """Lee el último paso en transcript.jsonl y el timestamp de modificación del log."""
     if not session_id:
-        return "Analizando requerimientos..."
+        return "Analizando requerimientos...", 0.0
     for root in [CLI_BRAIN_DIR, IDE_BRAIN_DIR]:
         log_path = os.path.join(root, session_id, ".system_generated", "logs", "transcript.jsonl")
         if os.path.exists(log_path):
             try:
+                mtime = os.path.getmtime(log_path)
                 with open(log_path, "rb") as f:
                     f.seek(0, os.SEEK_END)
                     size = f.tell()
@@ -683,21 +713,43 @@ def get_live_execution_step(session_id: Optional[str]) -> str:
                             args = tc.get("args", {})
                             if t_name == "run_command":
                                 cmd = str(args.get("CommandLine", "")).strip('\"\'')
-                                return f"💻 Terminal: `{cmd[:28]}...`" if len(cmd) > 28 else f"💻 Terminal: `{cmd}`"
+                                return (f"💻 Terminal: `{cmd[:28]}...`" if len(cmd) > 28 else f"💻 Terminal: `{cmd}`"), mtime
                             elif t_name in ["replace_file_content", "multi_replace_file_content", "write_to_file"]:
                                 tf = str(args.get("TargetFile", "")).strip('\"\'')
-                                return f"📝 Editando: `{os.path.basename(tf)}`"
+                                return f"📝 Editando: `{os.path.basename(tf)}`", mtime
                             elif t_name in ["view_file", "grep_search", "list_dir"]:
-                                return "🔍 Inspeccionando código..."
+                                return "🔍 Inspeccionando código...", mtime
                             else:
-                                return f"⚙️ Herramienta: `{t_name}`"
+                                return f"⚙️ Herramienta: `{t_name}`", mtime
                         elif data.get("type") == "PLANNER_RESPONSE":
-                            return "🧠 Razonando respuesta..."
+                            return "🧠 Razonando respuesta...", mtime
                     except Exception:
                         continue
+                return "Ejecutando código...", mtime
             except Exception:
                 pass
-    return "Ejecutando código..."
+    return "Ejecutando código...", 0.0
+
+def get_live_execution_step(session_id: Optional[str]) -> str:
+    """Wrapper de compatibilidad para telemetría en vivo del paso activo."""
+    step, _ = get_live_execution_step_and_mtime(session_id)
+    return step
+
+def get_newest_brain_session_id(after_timestamp: float) -> Optional[str]:
+    """Detecta si se ha creado una nueva carpeta de sesión en el cerebro después del inicio."""
+    for root in [CLI_BRAIN_DIR, IDE_BRAIN_DIR]:
+        if os.path.exists(root):
+            try:
+                for entry in os.scandir(root):
+                    if entry.is_dir():
+                        try:
+                            if entry.stat().st_mtime >= (after_timestamp - 3):
+                                return entry.name
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+    return None
 
 async def execute_antigravity_task(
     update: Update,
@@ -705,7 +757,7 @@ async def execute_antigravity_task(
     prompt: str,
     override_session_id: Optional[str] = None,
 ):
-    """Ejecuta el CLI de Antigravity en segundo plano con typing y progreso activo."""
+    """Ejecuta el CLI de Antigravity en segundo plano con telemetría en vivo y timeout dinámico por inactividad."""
     chat_id = update.effective_chat.id
     target_session = override_session_id if override_session_id is not None else state.active_session_id
     current_model = state.model
@@ -725,67 +777,116 @@ async def execute_antigravity_task(
         parse_mode=constants.ParseMode.MARKDOWN,
     )
 
-    cmd_args = ["agy"]
+    agy_bin = shutil.which("agy") or "agy"
+    cmd_args = [agy_bin]
     if target_session:
         cmd_args += ["--conversation", target_session]
     
     cmd_args += [
         "--model", current_model,
+        "--print-timeout", "30m",
         "--dangerously-skip-permissions",
         "-p", prompt,
     ]
 
     start_time = time.time()
-    is_running = True
+    last_activity_time = start_time
+    last_step = "Iniciando análisis..."
+    active_session_tracker = target_session
+    code = 0
+    output = ""
 
-    async def progress_tracker():
-        while is_running:
+    creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd_args,
+            cwd=state.current_project,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            creationflags=creation_flags,
+        )
+
+        comm_task = asyncio.create_task(proc.communicate())
+
+        while not comm_task.done():
             try:
                 await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.TYPING)
-                elapsed = int(time.time() - start_time)
-                if elapsed > 2 and elapsed % 4 == 0:
-                    curr_step = get_live_execution_step(target_session)
-                    try:
-                        await status_msg.edit_text(
-                            f"🧠 *Antigravity trabajando...*\n"
-                            f"📁 *Proyecto:* `{proj_name}`\n"
-                            f"🤖 *Modelo:* `{model_badge}` | 💬 *Sesión:* {session_badge}\n\n"
-                            f"⏳ *Paso activo:* {curr_step}\n"
-                            f"⏱️ _{elapsed}s transcurridos_",
-                            parse_mode=constants.ParseMode.MARKDOWN,
-                        )
-                    except Exception:
-                        pass
-                await asyncio.sleep(4)
-            except asyncio.CancelledError:
-                break
             except Exception:
-                await asyncio.sleep(4)
+                pass
 
-    tracker_task = asyncio.create_task(progress_tracker())
+            now = time.time()
+            total_elapsed = now - start_time
 
-    loop = asyncio.get_running_loop()
-    def run_process():
-        try:
-            res = subprocess.run(
-                cmd_args,
-                cwd=state.current_project,
-                capture_output=True,
-                text=True,
-                timeout=TASK_TIMEOUT,
-                encoding="utf-8",
-                errors="replace",
-            )
-            return res.returncode, (res.stdout + "\n" + res.stderr).strip()
-        except subprocess.TimeoutExpired:
-            return -1, f"⚠️ Timeout de Antigravity: La tarea tardó más de {TASK_TIMEOUT} segundos y fue detenida."
-        except Exception as e:
-            return -1, f"⚠️ Error invocando agy: {str(e)}"
+            # 1. Detección en vivo de sesión nueva si empezó sin ID
+            if not active_session_tracker:
+                detected = get_newest_brain_session_id(start_time)
+                if not detected:
+                    latest = get_latest_conversation_id()
+                    if latest and latest[0]:
+                        detected = latest[0]
+                if detected:
+                    active_session_tracker = detected
 
-    code, output = await loop.run_in_executor(None, run_process)
+            # 2. Telemetría de paso y actividad del transcript
+            curr_step, log_mtime = get_live_execution_step_and_mtime(active_session_tracker)
+            if curr_step != last_step or (log_mtime and log_mtime > last_activity_time):
+                last_activity_time = now
+                last_step = curr_step
 
-    is_running = False
-    tracker_task.cancel()
+            idle_elapsed = now - last_activity_time
+
+            # 3. Timeout por inactividad de paso (reseteado con cada actividad detectada)
+            if idle_elapsed > STEP_IDLE_TIMEOUT:
+                kill_process_tree(proc.pid)
+                try:
+                    await comm_task
+                except Exception:
+                    pass
+                code = -1
+                output = f"⚠️ Timeout por inactividad: Antigravity no registró cambios de paso ni actividad durante {STEP_IDLE_TIMEOUT}s (tiempo total: {int(total_elapsed)}s). Tarea detenida limpiamente."
+                break
+
+            # 4. Límite máximo global de seguridad (30 min)
+            if total_elapsed > MAX_TASK_TIMEOUT:
+                kill_process_tree(proc.pid)
+                try:
+                    await comm_task
+                except Exception:
+                    pass
+                code = -1
+                output = f"⚠️ Límite de seguridad alcanzado: La tarea superó el tiempo máximo global ({MAX_TASK_TIMEOUT}s). Proceso detenido."
+                break
+
+            # 5. Actualización periódica en Telegram
+            elapsed_int = int(total_elapsed)
+            idle_int = int(idle_elapsed)
+            display_session = f"`{active_session_tracker[:8]}...`" if active_session_tracker else "✨ Nueva Sesión"
+            try:
+                await status_msg.edit_text(
+                    f"🧠 *Antigravity trabajando...*\n"
+                    f"📁 *Proyecto:* `{proj_name}`\n"
+                    f"🤖 *Modelo:* `{model_badge}` | 💬 *Sesión:* {display_session}\n\n"
+                    f"⏳ *Paso activo:* {curr_step}\n"
+                    f"⏱️ _{elapsed_int}s transcurridos_ · _(hace {idle_int}s)_",
+                    parse_mode=constants.ParseMode.MARKDOWN,
+                )
+            except Exception:
+                pass
+
+            await asyncio.sleep(4)
+
+        if comm_task.done() and code == 0:
+            stdout_bytes, stderr_bytes = await comm_task
+            stdout_str = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+            stderr_str = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+            code = proc.returncode if proc.returncode is not None else 0
+            output = (stdout_str + "\n" + stderr_str).strip()
+
+    except Exception as e:
+        code = -1
+        output = f"⚠️ Error invocando agy: {str(e)}"
+
     total_secs = int(time.time() - start_time)
 
     try:
@@ -798,6 +899,9 @@ async def execute_antigravity_task(
         if latest:
             state.active_session_id = latest[0]
             state.active_session_title = latest[1]
+            state.save()
+        elif active_session_tracker:
+            state.active_session_id = active_session_tracker
             state.save()
 
     # Sincronización bidireccional inmediata hacia el IDE

@@ -956,8 +956,9 @@ async def execute_antigravity_task(
     if final_sid:
         sync_cli_to_ide(final_sid)
 
+    run_cmd("git add -N .")
     git_code, git_stat = run_cmd("git diff --stat")
-    has_git_changes = bool(git_stat and ("file changed" in git_stat or "insertions" in git_stat))
+    has_git_changes = bool(git_stat and ("file changed" in git_stat or "insertions" in git_stat or "changed" in git_stat))
 
     latest_plan = find_brain_artifact(state.active_session_id, "implementation_plan.md")
     plan_available = bool(latest_plan and os.path.exists(latest_plan))
@@ -1915,37 +1916,132 @@ async def cmd_walkthrough(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption="📄 Informe completo de cambios Walkthrough:",
     )
 
+def get_session_modified_files(session_id: Optional[str]) -> List[str]:
+    """Extrae los archivos editados o creados por Antigravity en la sesión activa desde el transcript."""
+    if not session_id:
+        return []
+    files = set()
+    for root in [CLI_BRAIN_DIR, IDE_BRAIN_DIR]:
+        log_p = os.path.join(root, session_id, ".system_generated", "logs", "transcript.jsonl")
+        if os.path.exists(log_p):
+            try:
+                with open(log_p, "r", encoding="utf-8", errors="ignore") as f:
+                    for line in f:
+                        if not line.strip():
+                            continue
+                        try:
+                            data = json.loads(line)
+                            for tc in data.get("tool_calls", []):
+                                t_name = tc.get("name", "")
+                                args = tc.get("args", {})
+                                if t_name in ["replace_file_content", "multi_replace_file_content", "write_to_file"]:
+                                    tf = args.get("TargetFile") or args.get("Path") or ""
+                                    if tf and "implementation_plan.md" not in tf and "walkthrough.md" not in tf:
+                                        files.add(os.path.basename(tf))
+                        except Exception:
+                            continue
+            except Exception:
+                pass
+    return sorted(list(files))
+
 async def cmd_diff(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra los archivos modificados y el diff de la última iteración o cambios locales pendientes."""
     if not is_authorized(update):
         return
 
     msg_target = update.effective_message
-    code, full_diff = run_cmd("git diff")
-    if not full_diff.strip():
-        await safe_reply_message(msg_target, "🌿 *El diff está limpio.* No hay cambios sin commitear.")
+    if not state.current_project:
+        await safe_reply_message(msg_target, "⚠️ No has seleccionado un proyecto. Envía `/projects` primero.")
         return
 
+    # 1. Asegurar detección de archivos nuevos no rastreados
+    run_cmd("git add -N .")
+
+    # 2. Comprobar si hay cambios pendientes en el árbol de trabajo
+    code_stat, stat = run_cmd("git diff --stat")
+    code_diff, full_diff = run_cmd("git diff")
+    has_uncommitted = bool(full_diff.strip())
+
+    session_files = get_session_modified_files(state.active_session_id)
+    session_files_str = ""
+    if session_files:
+        session_files_str = "📝 *Archivos tocados en esta sesión:*\n" + "\n".join(f"• `{f}`" for f in session_files[:10]) + "\n\n"
+
+    # CASO 1: Hay cambios locales sin commitear
+    if has_uncommitted:
+        keyboard = [
+            [InlineKeyboardButton("✅ Commit & Push", callback_data="approve_push")],
+            [InlineKeyboardButton("🗑️ Revertir Cambios", callback_data="revert_prompt")],
+        ]
+        stat_clean = stat.strip() if stat.strip() else "Archivos pendientes"
+        header = (
+            f"🔍 *Cambios Locales Pendientes (Sin Commitear)*\n"
+            f"──────────────────────────────\n"
+            f"{session_files_str}"
+            f"📊 *Archivos Modificados:*\n`{stat_clean}`\n\n"
+        )
+        if len(full_diff) <= 2800:
+            await safe_reply_message(
+                msg_target,
+                f"{header}```diff\n{full_diff}\n```",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        else:
+            await send_smart_message(
+                context=context,
+                chat_id=update.effective_chat.id,
+                text=f"{header}_Descarga el archivo adjunto para ver las líneas exactas del diff._",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                doc_filename="changes.diff",
+                caption="📄 Archivo completo de cambios Git Diff:",
+            )
+        return
+
+    # CASO 2: El árbol de trabajo está limpio (cambios ya commiteados, ej. por AutoPush)
+    _, commit_info = run_cmd('git log -1 --format="%h | %s (%cr)"')
+    _, commit_stat = run_cmd("git show --stat --oneline -1 HEAD")
+    _, commit_diff = run_cmd('git show --format="" -p HEAD')
+
+    stat_lines = commit_stat.strip().splitlines()
+    clean_stat = "\n".join(stat_lines[1:]).strip() if len(stat_lines) > 1 else (stat_lines[0] if stat_lines else "Sin detalles")
+
     keyboard = [
-        [InlineKeyboardButton("✅ Commit & Push", callback_data="approve_push")],
-        [InlineKeyboardButton("🗑️ Revertir Cambios", callback_data="revert_prompt")],
+        [
+            InlineKeyboardButton("🚀 CI/CD", callback_data="btn_ci"),
+            InlineKeyboardButton("🌿 Ramas", callback_data="btn_branches"),
+            InlineKeyboardButton("📊 Ver Estado", callback_data="btn_status"),
+        ]
     ]
 
-    if len(full_diff) <= 3500:
+    header = (
+        f"🌿 *Directorio Limpio (Cambios Ya Commiteados)*\n"
+        f"──────────────────────────────\n"
+        f"{session_files_str}"
+        f"📌 *Último Commit:* `{commit_info.strip()}`\n\n"
+        f"📊 *Archivos Modificados en este Commit:*\n`{clean_stat}`\n\n"
+    )
+
+    if commit_diff.strip():
+        if len(commit_diff) <= 2800:
+            await safe_reply_message(
+                msg_target,
+                f"{header}```diff\n{commit_diff}\n```",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+            )
+        else:
+            await send_smart_message(
+                context=context,
+                chat_id=update.effective_chat.id,
+                text=f"{header}_Descarga el archivo adjunto para ver el diff de código completo._",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                doc_filename="latest_commit.diff",
+                caption="📄 Diff completo del último commit:",
+            )
+    else:
         await safe_reply_message(
             msg_target,
-            f"🔍 *Git Diff:*\n```diff\n{full_diff}\n```",
+            f"{header}_No hay diferencias registradas en el historial reciente._",
             reply_markup=InlineKeyboardMarkup(keyboard),
-        )
-    else:
-        _, stat = run_cmd("git diff --stat")
-        msg = f"🔍 *Git Diff Extenso:*\n`{stat}`\n\n_Descarga el archivo adjunto para ver las líneas exactas._"
-        await send_smart_message(
-            context=context,
-            chat_id=update.effective_chat.id,
-            text=msg,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            doc_filename="changes.diff",
-            caption="📄 Archivo de cambios Git Diff:",
         )
 
 async def cmd_commit(update: Update, context: ContextTypes.DEFAULT_TYPE):

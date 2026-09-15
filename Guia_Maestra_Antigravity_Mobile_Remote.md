@@ -223,7 +223,11 @@ El comando y botón de diff cuentan con un motor dual que resuelve el problema d
 ## 9. Robustez Técnica y Manejo de Errores
 
 - **Motor Guiado por Pasos Activos (Zero Timeouts Arbitrarios):**  
-  Eliminación de cortes fijos (como el antiguo timeout de 300s). El puente implementa un *Idle Watchdog* (`STEP_IDLE_TIMEOUT = 180s`) que monitorea `transcript.jsonl` y resetea continuamente el contador a cero cada vez que el agente cambia de paso o edita un archivo. Tareas masivas de más de 120 pasos (20-30 minutos) corren de principio a fin sin interrupciones.
+  Eliminación de cortes fijos (como el antiguo timeout de 300s). El puente implementa un *Idle Watchdog* (`STEP_IDLE_TIMEOUT = 360s`) que monitorea `transcript.jsonl` y resetea continuamente el contador a cero cada vez que el agente cambia de paso o edita un archivo. Ofrece 6 minutos completos por paso, permitiendo a modelos de pensamiento profundo (*thinking models*) planificar y razonar sin riesgo de cancelaciones abruptas. Tareas masivas de más de 300 pasos corren de principio a fin sin interrupciones.
+- **Modo Plan Estricto con Guardián Cognitivo:**  
+  Al activar `/mode plan` o usar `/plan <tarea>`, el puente inyecta un guardián cognitivo estricto que prohíbe el uso de herramientas de modificación de código en ese turno, obligando a Antigravity a generar exclusivamente `implementation_plan.md` y detenerse de inmediato para entregar el plan a Telegram, evitando que `--dangerously-skip-permissions` auto-apruebe la ejecución sin consentimiento humano.
+- **Git Diff Inteligente con Fallback a HEAD:**  
+  Si Turbo AutoPush o un commit previo ya enviaron los cambios al árbol de Git, el botón `[ 🔍 Ver Diff ]` no queda en blanco; realiza una inspección inmediata de `HEAD` (`git show --stat` y `git diff HEAD~1..HEAD`), permitiendo ver con precisión las líneas tocadas en esa iteración.
 - **Supresión Total de Consolas en Windows (`CREATE_NO_WINDOW`):**  
   Tanto `agy` como los servidores MCP hijos (`chrome-devtools-mcp`, `antigravity-mem`) se ejecutan con banderas de supresión de ventana (`CREATE_NO_WINDOW` y `SW_HIDE`), impidiendo que aparezcan consolas de comandos vacías o parpadeantes en el escritorio.
 - **Liquidación en Cascada (`kill_process_tree`):**  

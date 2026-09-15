@@ -135,10 +135,11 @@ ANTIGRAVITY_WORKSPACE_ROOTS=C:\proyectos2026,D:\workspace
 ANTIGRAVITY_DEFAULT_PROJECT=C:\proyectos2026\mi-proyecto
 
 # Configuración de IA y modelo
-ANTIGRAVITY_DEFAULT_MODEL=gemini-3.8-flash-high
+ANTIGRAVITY_DEFAULT_MODEL=auto
+ANTIGRAVITY_DEFAULT_MODE=accept-edits
 
-# Timeouts guiados por actividad
-ANTIGRAVITY_STEP_IDLE_TIMEOUT=180
+# Timeouts guiados por actividad (360s = 6 minutos por paso para modelos thinking)
+ANTIGRAVITY_STEP_IDLE_TIMEOUT=360
 ANTIGRAVITY_MAX_TASK_TIMEOUT=0
 
 # Switches de automatización y telemetría

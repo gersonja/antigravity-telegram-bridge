@@ -639,9 +639,19 @@ def find_brain_artifact(session_id: Optional[str] = None, artifact_name: str = "
 
     brain_roots = [CLI_BRAIN_DIR, IDE_BRAIN_DIR]
     for root in brain_roots:
-        p = os.path.join(root, session_id, artifact_name)
+        target_dir = os.path.join(root, session_id)
+        if not os.path.exists(target_dir):
+            continue
+        p = os.path.join(target_dir, artifact_name)
         if os.path.exists(p):
             return p
+        if "plan" in artifact_name.lower():
+            try:
+                for fname in sorted(os.listdir(target_dir), reverse=True):
+                    if fname.endswith(".md") and "plan" in fname.lower() and not fname.startswith("."):
+                        return os.path.join(target_dir, fname)
+            except Exception:
+                pass
 
     return None
 
@@ -827,12 +837,22 @@ async def execute_antigravity_task(
     if target_session:
         cmd_args += ["--conversation", target_session]
     
+    effective_prompt = prompt
+    if effective_mode == "plan":
+        plan_guard = (
+            "⚠️ [MODO PLANIFICACIÓN ESTRICTO ACTIVADO]\n"
+            "Tu ÚNICA tarea en este turno es investigar el repositorio, analizar dependencias y generar o actualizar el documento de plan 'implementation_plan.md' en el cerebro de esta sesión.\n"
+            "REGLA ESTRICTA: NO modifiques ningún archivo de código del proyecto todavía (no uses herramientas de edición de código en este turno). Limítate a investigar y escribir el artefacto del plan.\n"
+            "Concluye tu respuesta resumiendo el plan propuesto para que el usuario pueda revisarlo y aprobarlo mediante el botón 'Ejecutar Plan'."
+        )
+        effective_prompt = f"{plan_guard}\n\nRequerimiento del usuario:\n{prompt}"
+
     cmd_args += [
         "--model", effective_model,
         "--mode", effective_mode,
         "--print-timeout", "2h",
         "--dangerously-skip-permissions",
-        "-p", prompt,
+        "-p", effective_prompt,
     ]
 
     start_time = time.time()

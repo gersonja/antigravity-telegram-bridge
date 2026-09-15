@@ -128,8 +128,8 @@ DEFAULT_HEALTH_URL = os.environ.get("ANTIGRAVITY_DEFAULT_HEALTH_URL", "https://g
 TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_TASK_TIMEOUT", "300"))
 # Timeout por inactividad entre pasos: si no hay avance en este tiempo, se considera estancada
 STEP_IDLE_TIMEOUT = int(os.environ.get("ANTIGRAVITY_STEP_IDLE_TIMEOUT", "180"))
-# Límite global absoluto de seguridad para evitar tareas infinitas (30 min)
-MAX_TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_MAX_TASK_TIMEOUT", "1800"))
+# Límite global de seguridad (en segundos). 0 = sin límite global (guiado 100% por actividad de pasos)
+MAX_TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_MAX_TASK_TIMEOUT", "0"))
 
 
 # Rutas de Antigravity en Windows
@@ -784,7 +784,7 @@ async def execute_antigravity_task(
     
     cmd_args += [
         "--model", current_model,
-        "--print-timeout", "30m",
+        "--print-timeout", "2h",
         "--dangerously-skip-permissions",
         "-p", prompt,
     ]
@@ -847,8 +847,8 @@ async def execute_antigravity_task(
                 output = f"⚠️ Timeout por inactividad: Antigravity no registró cambios de paso ni actividad durante {STEP_IDLE_TIMEOUT}s (tiempo total: {int(total_elapsed)}s). Tarea detenida limpiamente."
                 break
 
-            # 4. Límite máximo global de seguridad (30 min)
-            if total_elapsed > MAX_TASK_TIMEOUT:
+            # 4. Límite máximo global de seguridad (solo si MAX_TASK_TIMEOUT > 0)
+            if MAX_TASK_TIMEOUT > 0 and total_elapsed > MAX_TASK_TIMEOUT:
                 kill_process_tree(proc.pid)
                 try:
                     await comm_task
@@ -2102,13 +2102,23 @@ async def do_commit_and_push(update_or_query: Any, context: ContextTypes.DEFAULT
             f"(1 sola línea, máximo 60 caracteres, ej: 'feat(lpr): agregar validacion de placas'). "
             f"No agregues comillas ni explicaciones adicionales. Los cambios son:\n{quick_diff[:800]}"
         )
-        code_ai, ai_msg = run_cmd(f'agy --model gemini-3.8-flash-high --dangerously-skip-permissions -p "{prompt_commit}"', timeout=40)
+        code_ai, ai_msg = run_cmd(
+            f'agy --model gemini-3.8-flash-high --disable-slash-commands --dangerously-skip-permissions -p "{prompt_commit}"',
+            timeout=90,
+        )
         
         clean_ai_msg = ai_msg.splitlines()[-1].strip().replace('"', '').replace('`', '') if ai_msg else ""
-        if clean_ai_msg and len(clean_ai_msg) < 80:
+        if (
+            code_ai == 0
+            and clean_ai_msg
+            and not clean_ai_msg.startswith("⚠️")
+            and "excedió el tiempo límite" not in clean_ai_msg
+            and len(clean_ai_msg) < 80
+        ):
             commit_msg = clean_ai_msg
         elif state.last_prompt:
-            commit_msg = f"feat(mobile): {state.last_prompt[:50]}"
+            clean_p = sanitize_telegram_markdown(state.last_prompt)[:50].strip()
+            commit_msg = f"feat(mobile): {clean_p}"
         else:
             commit_msg = "feat(mobile): actualizacion desde antigravity bridge"
 

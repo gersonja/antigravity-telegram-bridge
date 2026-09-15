@@ -130,7 +130,8 @@ El bot está diseñado para operarse al 95% mediante botones en pantalla, minimi
 | `/session <id>` | Salto directo a una sesión por su identificador único. | Carga la ficha de la sesión. |
 | `/exit_session` | Sale de la sesión activa y entra en *Modo Hilo Limpio*. | `[ 💬 Entrar a Sesión ]`, `[ 📁 Proyectos ]`. |
 | `/status` | Ficha en vivo de RAM libre, batería/AC, AutoPush, proyecto, sesión activa, git y botones. | `[ 🧠 Ver Plan ]`, `[ ⚡ AutoPush ]`, `[ 🚀 CI/CD ]`, `[ 🌐 Health ]`, `[ 🌿 Ramas ]`, `[ 🔋 Batería ]`. |
-| `/plan` | Muestra el resumen del plan de implementación (`implementation_plan.md`). | `[ ▶️ Ejecutar Plan ]`, `[ 🔍 Ver Diff ]`. |
+| `/plan [tarea]` | **Atajo Rápido:** Genera un plan de arquitectura formal para la tarea o muestra el `implementation_plan.md` activo. | `[ ▶️ Ejecutar Plan ]`, `[ 🔍 Ver Diff ]`. |
+| `/mode` o `/modos` | Alterna modo de ejecución: ⚡ Directo (`accept-edits`) vs 🧠 Planificación (`plan`). | `[ ⚡ Directo ]`, `[ 🧠 Plan ]`. |
 | `/walkthrough` | Muestra el informe de tareas finalizadas (`walkthrough.md`). | Documento descargable si es extenso. |
 | `/diff` | Muestra los cambios de código no commiteados con formato de color diff. | `[ ✅ Commit & Push ]`, `[ 🗑️ Revertir Cambios ]`. |
 | `/commit [msg]` | Realiza commit y push. Si omites el mensaje, la IA genera uno convencional. | Notificación con hash, rama remota y botón para vigilar CI/CD. |
@@ -141,13 +142,24 @@ El bot está diseñado para operarse al 95% mediante botones en pantalla, minimi
 | `/branches` | Muestra las ramas Git locales recientes con botones táctiles para alternar. | Botones `[ 🔀 Cambiar a <Rama> ]`. |
 | `/branch <nombre>` | Cambia a la rama indicada o la crea si no existe (`git checkout -b`). | Confirmación inmediata de rama activa. |
 | `/revert` | Descarta modificaciones locales (`git restore . && git clean -fd`). | Diálogo de confirmación de seguridad. |
-| `/models` | Alterna entre modelos de IA (Gemini 3.8 Flash High, Claude 3.7 Sonnet, etc.). | Botones de selección de modelo. |
+| `/models` | Alterna entre modelos de IA (Auto-Router, Gemini 3.8 Flash, Claude 3.7 Sonnet, etc.). | Botones de selección de modelo. |
 | `/cmd <comando>` | Terminal remota para ejecutar cualquier orden (`mvnw test`, `npm run build`). | Envío inteligente con salida capturada. |
 | 📸 *(Foto / Captura)* | Envía una captura de pantalla de un bug o diseño con texto explicativo. | Análisis multimodal inmediato de Antigravity. |
 
 ---
 
 ## 7. Módulos Avanzados de Automatización y Telemetría
+
+### 🧠 Modos de Ejecución y Atajo de Planificación (`/mode` y `/plan <tarea>`)
+Antigravity soporta dos modos de ejecución:
+1. **⚡ Directo (`accept-edits` - Predeterminado):**
+   - El agente investiga, edita archivos, ejecuta comandos y aplica los cambios inmediatamente.
+   - **Consumo de tokens:** Mínimo para tareas puntuales (arreglar un bug, cambiar estilos CSS, un commit, etc.). Ideal para el trabajo diario rápido.
+2. **🧠 Planificación (`plan`):**
+   - El agente investiga el código a fondo, mapea dependencias, genera un `implementation_plan.md` formal en el cerebro (`~/.gemini/antigravity-ide/brain/`) y se detiene a la espera de tu aprobación sin tocar ningún archivo de código.
+   - Al terminar, Telegram te presenta el resumen con el botón interactivo **[ ▶️ Ejecutar Plan ]**.
+   - **Consumo de tokens y eficiencia:** Aunque la primera iteración genera un documento estructurado, en tareas complejas, refactorizaciones o migraciones **AHORRA tokens y tiempo a nivel global**. Evita el costoso ciclo de "ensayo y error" (donde un modelo sin plan edita archivos incorrectos, rompe tests y quema contexto tratando de autocorregirse).
+   - **Atajo Rápido al Vuelo:** No hace falta cambiar el modo global. Simplemente escribe `/plan <tu petición>` y el bot ejecutará esa tarea específica en modo plan de inmediato.
 
 ### ⚡ Turbo AutoPush Mode (`/autopush`)
 Permite un flujo de trabajo 100% manos libres en movilidad. Cuando está activado:

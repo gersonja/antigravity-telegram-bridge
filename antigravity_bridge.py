@@ -121,13 +121,14 @@ if not os.path.exists(os.path.dirname(STATE_FILE)):
 
 DEFAULT_MODEL = os.environ.get("ANTIGRAVITY_DEFAULT_MODEL", "auto")
 DEFAULT_AUTOPUSH = os.environ.get("ANTIGRAVITY_DEFAULT_AUTOPUSH", "false").lower() in ("true", "1", "yes")
+DEFAULT_EXECUTION_MODE = os.environ.get("ANTIGRAVITY_DEFAULT_MODE", "accept-edits")
 
 WATCHDOG_ENABLED = os.environ.get("ANTIGRAVITY_WATCHDOG_ENABLED", "true").lower() in ("true", "1", "yes")
 WATCHDOG_INTERVAL = int(os.environ.get("ANTIGRAVITY_WATCHDOG_INTERVAL", "45"))
 DEFAULT_HEALTH_URL = os.environ.get("ANTIGRAVITY_DEFAULT_HEALTH_URL", "https://google.com")
 TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_TASK_TIMEOUT", "300"))
 # Timeout por inactividad entre pasos: si no hay avance en este tiempo, se considera estancada
-STEP_IDLE_TIMEOUT = int(os.environ.get("ANTIGRAVITY_STEP_IDLE_TIMEOUT", "180"))
+STEP_IDLE_TIMEOUT = int(os.environ.get("ANTIGRAVITY_STEP_IDLE_TIMEOUT", "360"))
 # Límite global de seguridad (en segundos). 0 = sin límite global (guiado 100% por actividad de pasos)
 MAX_TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_MAX_TASK_TIMEOUT", "0"))
 
@@ -148,6 +149,11 @@ AVAILABLE_MODELS = {
     "claude-sonnet-4-6": "🧠 Claude Sonnet 4.6 (Thinking)",
     "claude-opus-4-6-thinking": "🏛️ Claude Opus 4.6 (Thinking)",
     "gpt-oss-120b-medium": "🌐 GPT-OSS 120B",
+}
+
+AVAILABLE_MODES = {
+    "accept-edits": "⚡ Directo (Ejecución y Edición Inmediata)",
+    "plan": "🧠 Planificación (Arquitectura e Implementation Plan)",
 }
 
 def resolve_model(prompt: str, selected_model: str) -> Tuple[str, str]:
@@ -192,6 +198,7 @@ class BotState:
         self.active_session_id: Optional[str] = None
         self.active_session_title: Optional[str] = None
         self.model: str = DEFAULT_MODEL
+        self.execution_mode: str = DEFAULT_EXECUTION_MODE
         self.last_prompt: str = ""
         self.autopush: bool = DEFAULT_AUTOPUSH
         self.project_cache: Dict[str, str] = {}
@@ -206,6 +213,7 @@ class BotState:
                     self.active_session_id = data.get("active_session_id")
                     self.active_session_title = data.get("active_session_title")
                     self.model = data.get("model", DEFAULT_MODEL)
+                    self.execution_mode = data.get("execution_mode", DEFAULT_EXECUTION_MODE)
                     self.autopush = bool(data.get("autopush", DEFAULT_AUTOPUSH))
             except Exception as e:
                 print(f"[State] Error cargando {STATE_FILE}: {e}")
@@ -222,6 +230,7 @@ class BotState:
                     "active_session_id": self.active_session_id,
                     "active_session_title": self.active_session_title,
                     "model": self.model,
+                    "execution_mode": self.execution_mode,
                     "autopush": self.autopush,
                 }, f, indent=2, ensure_ascii=False)
         except Exception as e:
@@ -790,11 +799,14 @@ async def execute_antigravity_task(
     context: ContextTypes.DEFAULT_TYPE,
     prompt: str,
     override_session_id: Optional[str] = None,
+    mode: Optional[str] = None,
 ):
     """Ejecuta el CLI de Antigravity en segundo plano con telemetría en vivo y timeout dinámico por inactividad."""
     chat_id = update.effective_chat.id
     target_session = override_session_id if override_session_id is not None else state.active_session_id
     effective_model, model_badge = resolve_model(prompt, state.model)
+    effective_mode = mode if mode else getattr(state, "execution_mode", "accept-edits")
+    mode_icon = "🧠 Plan" if effective_mode == "plan" else "⚡ Directo"
     session_badge = f"`{target_session[:8]}...`" if target_session else "✨ Nueva Sesión"
     proj_name = os.path.basename(os.path.normpath(state.current_project)) if state.current_project else "Sin Proyecto"
 
@@ -803,7 +815,8 @@ async def execute_antigravity_task(
         text=(
             f"🧠 *Antigravity en acción...*\n"
             f"📁 *Proyecto:* `{proj_name}`\n"
-            f"🤖 *Modelo:* `{model_badge}` | 💬 *Sesión:* {session_badge}\n\n"
+            f"🤖 *Modelo:* `{model_badge}` | ⚙️ *Modo:* `{mode_icon}`\n"
+            f"💬 *Sesión:* {session_badge}\n\n"
             f"⏳ _Iniciando análisis... (0s)_"
         ),
         parse_mode=constants.ParseMode.MARKDOWN,
@@ -816,6 +829,7 @@ async def execute_antigravity_task(
     
     cmd_args += [
         "--model", effective_model,
+        "--mode", effective_mode,
         "--print-timeout", "2h",
         "--dangerously-skip-permissions",
         "-p", prompt,
@@ -898,7 +912,8 @@ async def execute_antigravity_task(
                 await status_msg.edit_text(
                     f"🧠 *Antigravity trabajando...*\n"
                     f"📁 *Proyecto:* `{proj_name}`\n"
-                    f"🤖 *Modelo:* `{model_badge}` | 💬 *Sesión:* {display_session}\n\n"
+                    f"🤖 *Modelo:* `{model_badge}` | ⚙️ *Modo:* `{mode_icon}`\n"
+                    f"💬 *Sesión:* {display_session}\n\n"
                     f"⏳ *Paso activo:* {curr_step}\n"
                     f"⏱️ _{elapsed_int}s transcurridos_ · _(hace {idle_int}s)_",
                     parse_mode=constants.ParseMode.MARKDOWN,
@@ -971,7 +986,7 @@ async def execute_antigravity_task(
     reply_markup = InlineKeyboardMarkup(buttons)
 
     header = (
-        f"🤖 *Respuesta de Antigravity* `({total_secs}s | {model_badge})`\n"
+        f"🤖 *Respuesta de Antigravity* `({total_secs}s | {model_badge} | {mode_icon})`\n"
         f"💬 *Sesión:* `{state.active_session_title or (state.active_session_id[:8] if state.active_session_id else 'activa')}`\n"
         f"──────────────────────────────\n\n"
     )
@@ -1066,7 +1081,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📍 *Contexto Actual:*\n"
         f"• 📁 *Proyecto:* `{proj_name}` {'✅' if proj_selected else '❌ (Debes elegir uno)'}\n"
         f"• 💬 *Sesión:* `{ses_name}` {'(Activa con historial)' if session_active else '(Hilo limpio)'}\n"
-        f"• 🤖 *Modelo:* `{state.model}`\n"
+        f"• 🤖 *Modelo:* `{state.model}` | ⚙️ *Modo:* `{getattr(state, 'execution_mode', 'accept-edits')}`\n"
         f"──────────────────────────────\n\n"
     )
 
@@ -1085,8 +1100,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text += "• `/sessions` - Listar las sesiones guardadas de este proyecto\n"
     help_text += "• `/new` - Forzar inicio de un hilo limpio en el proyecto\n\n"
 
-    help_text += "🧠 *CEREBRO & ARTEFACTOS*\n"
-    help_text += "• `/plan` - Ver el `implementation_plan.md` y botón de *Ejecutar Plan*\n"
+    help_text += "🧠 *CEREBRO, MODOS & ARTEFACTOS*\n"
+    help_text += "• `/plan [tarea]` - *Atajo:* Investigar y generar plan de arquitectura (o ver el plan actual)\n"
+    help_text += "• `/mode` o `/modos` - Cambiar modo de ejecución (⚡ Directo vs 🧠 Planificación)\n"
     help_text += "• `/walkthrough` - Ver el informe de cambios implementados\n\n"
 
     help_text += "🌿 *GIT, RAMAS & COMMITS*\n"
@@ -1116,7 +1132,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status"),
-            InlineKeyboardButton("🚀 CI/CD", callback_data="btn_ci"),
+            InlineKeyboardButton("⚙️ Modo", callback_data="btn_mode"),
         ],
         [
             InlineKeyboardButton("🧠 Ver Plan", callback_data="view_plan"),
@@ -1592,6 +1608,9 @@ def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
         ac_icon = "🔌 AC" if ac == 1 else ("🔋 Batería" if ac == 0 else "❓")
         power_str = f"{pct}% ({ac_icon})"
 
+    mode_curr = getattr(state, "execution_mode", "accept-edits")
+    mode_label = AVAILABLE_MODES.get(mode_curr, mode_curr)
+
     autopush_str = "🟢 Activado" if state.autopush else "⚪ Desactivado"
 
     text = (
@@ -1599,6 +1618,7 @@ def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
         f"──────────────────────────────\n"
         f"📁 *Proyecto:* `{proj_name}`\n"
         f"🤖 *Modelo:* `{model_label}`\n"
+        f"⚙️ *Modo:* `{mode_label}`\n"
         f"💬 *Sesión:* *{title_clean}*\n"
         f"🆔 {sid_badge}\n"
         f"──────────────────────────────\n"
@@ -1668,14 +1688,14 @@ def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
     if active_sid:
         keyboard.append([
             InlineKeyboardButton("💬 Sesiones", callback_data="btn_sessions"),
+            InlineKeyboardButton("⚙️ Modo", callback_data="btn_mode"),
             InlineKeyboardButton("🚪 Salir de Sesión", callback_data="ses_NEW"),
-            InlineKeyboardButton("📁 Proyectos", callback_data="btn_projects"),
         ])
     else:
         keyboard.append([
             InlineKeyboardButton("💬 Sesiones", callback_data="btn_sessions"),
             InlineKeyboardButton("📁 Proyectos", callback_data="btn_projects"),
-            InlineKeyboardButton("🤖 Modelos", callback_data="btn_models"),
+            InlineKeyboardButton("⚙️ Modo", callback_data="btn_mode"),
         ])
 
     return text, InlineKeyboardMarkup(keyboard)
@@ -1796,13 +1816,39 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     msg_target = update.effective_message
+
+    # 1. Detectar si el usuario incluyó una petición: /plan <tarea...>
+    raw_text = update.message.text.strip() if update.message and update.message.text else ""
+    plan_prompt = ""
+    if raw_text:
+        match = re.match(r"^/plan(?:@\w+)?(?:\s+(.+))?$", raw_text, re.DOTALL | re.IGNORECASE)
+        if match and match.group(1):
+            plan_prompt = match.group(1).strip()
+    if not plan_prompt and context.args:
+        plan_prompt = " ".join(context.args).strip()
+
+    if plan_prompt:
+        if not state.current_project:
+            await safe_reply_message(msg_target, "⚠️ No has seleccionado un proyecto. Envía `/projects` primero.")
+            return
+
+        state.last_prompt = f"/plan {plan_prompt}"
+        # Ejecutar Antigravity directamente en modo plan con telemetría en vivo
+        await execute_antigravity_task(update, context, plan_prompt, mode="plan")
+        return
+
+    # 2. Si se ejecutó solo "/plan" sin argumentos, mostramos el plan actual si existe
     if not state.active_session_id:
         await safe_reply_message(
             msg_target,
-            "⚠️ No hay ninguna sesión activa (estás en *Modo Hilo Limpio*).\n\n"
-            "• Usa `/sessions` para entrar a una sesión existente que tenga un plan.\n"
-            "• O pide al agente en un mensaje: _'Genera un plan de implementación para...'_\n"
-            "y Antigravity creará el plan para tu nueva conversación.",
+            "🧠 *Modo Planificación de Antigravity*\n"
+            "──────────────────────────────\n"
+            "No hay ninguna sesión activa en este momento (estás en *Modo Hilo Limpio*).\n\n"
+            "💡 *Atajo Rápido de Planificación:*\n"
+            "Escribe `/plan <tu petición>` para que Antigravity investigue el código, analice dependencias y construya un plan formal de implementación sin modificar archivos todavía.\n\n"
+            "_Ejemplo:_\n"
+            "`/plan Agregar autenticación OAuth2 con Google y migración de BD`\n\n"
+            "• O usa `/sessions` para cargar una conversación previa que ya tenga un plan.",
         )
         return
 
@@ -1812,8 +1858,9 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply_message(
             msg_target,
             f"⚠️ La sesión activa (*{ses_name}*) no tiene ningún `implementation_plan.md` registrado.\n\n"
-            f"Puedes pedirle al agente: _'Genera un plan de implementación para...'_\n"
-            f"y Antigravity lo construirá para esta sesión.",
+            f"💡 *Para planificar en esta sesión:*\n"
+            f"Escribe `/plan <tu petición>` (ej: `/plan refactorizar modelo de usuarios`) "
+            f"y Antigravity construirá el plan paso a paso sin modificar código todavía.",
         )
         return
 
@@ -1920,6 +1967,41 @@ async def cmd_models(update: Update, context: ContextTypes.DEFAULT_TYPE):
         mark = "👉 " if m_id == state.model else "▫️ "
         text += f"{mark}*{m_label}*\nID: `{m_id}`\n\n"
         keyboard.append([InlineKeyboardButton(f"{'👉 ' if m_id == state.model else ''}{m_label}", callback_data=f"model_{m_id}")])
+
+    await safe_reply_message(msg_target, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def cmd_mode(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Permite ver o cambiar el modo de ejecución (Directo vs Planificación)."""
+    if not is_authorized(update):
+        return
+
+    msg_target = update.effective_message
+    curr = getattr(state, "execution_mode", "accept-edits")
+    curr_label = AVAILABLE_MODES.get(curr, curr)
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                f"{'👉 ' if curr == 'accept-edits' else ''}⚡ Directo (accept-edits)",
+                callback_data="set_mode:accept-edits",
+            )
+        ],
+        [
+            InlineKeyboardButton(
+                f"{'👉 ' if curr == 'plan' else ''}🧠 Planificación (plan)",
+                callback_data="set_mode:plan",
+            )
+        ],
+    ]
+
+    text = (
+        f"⚙️ *Modo de Ejecución de Antigravity*\n"
+        f"──────────────────────────────\n"
+        f"Modo actual: *{curr_label}*\n\n"
+        f"• *⚡ Directo (`accept-edits`):* Antigravity analiza, edita archivos y ejecuta de inmediato. Máxima velocidad y fluidez.\n\n"
+        f"• *🧠 Planificación (`plan`):* Antigravity analiza la arquitectura, crea `implementation_plan.md` en el cerebro y espera tu aprobación antes de modificar código.\n\n"
+        f"💡 *Tip Pro:* ¡No necesitas cambiar de modo permanentemente! Escribe `/plan <tu tarea>` en cualquier momento para activar el planificador al vuelo."
+    )
 
     await safe_reply_message(msg_target, text, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -2250,6 +2332,37 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
             return
 
+        elif data == "btn_mode":
+            curr = getattr(state, "execution_mode", "accept-edits")
+            curr_label = AVAILABLE_MODES.get(curr, curr)
+            keyboard = [
+                [
+                    InlineKeyboardButton(
+                        f"{'👉 ' if curr == 'accept-edits' else ''}⚡ Directo (accept-edits)",
+                        callback_data="set_mode:accept-edits",
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        f"{'👉 ' if curr == 'plan' else ''}🧠 Planificación (plan)",
+                        callback_data="set_mode:plan",
+                    )
+                ],
+                [
+                    InlineKeyboardButton("📊 Volver a Estado", callback_data="btn_status"),
+                ]
+            ]
+            text = (
+                f"⚙️ *Modo de Ejecución de Antigravity*\n"
+                f"──────────────────────────────\n"
+                f"Modo actual: *{curr_label}*\n\n"
+                f"• *⚡ Directo (`accept-edits`):* Antigravity analiza, edita archivos y ejecuta de inmediato. Máxima velocidad y fluidez.\n\n"
+                f"• *🧠 Planificación (`plan`):* Antigravity analiza la arquitectura, crea `implementation_plan.md` en el cerebro y espera tu aprobación antes de modificar código.\n\n"
+                f"💡 *Tip Pro:* ¡No necesitas cambiar de modo permanentemente! Escribe `/plan <tu tarea>` en cualquier momento para activar el planificador al vuelo."
+            )
+            await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+            return
+
         elif data == "btn_status":
             await show_status_view(query)
             return
@@ -2439,6 +2552,29 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 desc = f"🤖 *Modelo de IA fijado:*\n`{label}`\n\nTodas las siguientes órdenes se procesarán exclusivamente con este modelo."
             await safe_edit_message(query, desc)
 
+        # Selección de Modo de Ejecución
+        elif data.startswith("set_mode:"):
+            selected_mode = data.replace("set_mode:", "")
+            if selected_mode in AVAILABLE_MODES:
+                state.execution_mode = selected_mode
+                state.save()
+                label = AVAILABLE_MODES.get(selected_mode, selected_mode)
+                if selected_mode == "accept-edits":
+                    desc = (
+                        f"⚙️ *Modo de Ejecución Actualizado:*\n*{label}*\n\n"
+                        f"⚡ *Flujo Inmediato:* Cada mensaje que envíes analizará, editará código y ejecutará directamente.\n"
+                        f"💡 _Recuerda que siempre puedes forzar un plan con `/plan <tu petición>`._"
+                    )
+                else:
+                    desc = (
+                        f"⚙️ *Modo de Ejecución Actualizado:*\n*{label}*\n\n"
+                        f"🧠 *Planificación Previa:* Cada mensaje que envíes generará primero un `implementation_plan.md` formal y esperará tu aprobación con el botón *Ejecutar Plan* antes de editar archivos."
+                    )
+                keyboard = [
+                    [InlineKeyboardButton("📊 Volver a Estado", callback_data="btn_status")]
+                ]
+                await safe_edit_message(query, desc, reply_markup=InlineKeyboardMarkup(keyboard))
+
         # Acciones de Plan
         elif data == "view_plan":
             await cmd_plan(update, context)
@@ -2584,8 +2720,10 @@ def main():
     app.add_handler(CommandHandler("close_session", cmd_exit_session))
     app.add_handler(CommandHandler("new", cmd_new_session))
 
-    # Cerebro y Artefactos
+    # Cerebro, Modos y Artefactos
     app.add_handler(CommandHandler("plan", cmd_plan))
+    app.add_handler(CommandHandler("mode", cmd_mode))
+    app.add_handler(CommandHandler("modos", cmd_mode))
     app.add_handler(CommandHandler("walkthrough", cmd_walkthrough))
 
     # Git y Código

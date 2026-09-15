@@ -47,13 +47,15 @@ graph TD
 
 ### 1. 🧠 Integración Completa con Google Antigravity (`agy` & IDE)
 - **Sincronización Bidireccional Total (CLI 🔄 IDE):** Cada orden ejecutada desde Telegram actualiza la base de datos SQLite oficial (`conversation_summaries.db`) y el cerebro del agente (`transcript.jsonl`). Los chats iniciados en el IDE se pueden continuar en Telegram y viceversa.
-- **Soporte Multimodelo:** Alterna dinámicamente con un botón táctil entre `gemini-3.8-flash-high`, `gemini-3.8-flash-medium`, `gemini-3.7-flash-high`, `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, etc.
+- **Auto-Router y Multimodelo:** Selector automático inteligente (`auto`) que clasifica tareas entre Gemini 3.8 Flash Medium (ultrarrápido para UI, CSS, fixes) y Gemini 3.8 Flash High (análisis profundo y arquitectura). También soporta `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, etc.
+- **Modos de Ejecución Flexibles (`/mode`):** Alterna entre **⚡ Directo (`accept-edits`)** para ejecución inmediata y **🧠 Planificación (`plan`)** para diseño previo de arquitectura.
+- **Atajo Rápido de Planificación (`/plan <tarea>`):** Escribe `/plan` seguido de tu objetivo para entrar directamente en modo plan sin cambiar la configuración global. Antigravity investiga, genera el `implementation_plan.md` y te ofrece el botón táctil **[ ▶️ Ejecutar Plan ]** para aplicarlo.
 - **Telemetría Paso a Paso en Vivo:** Telegram muestra en tiempo real qué herramienta ejecuta el agente (*"💻 Terminal: git status"*, *"📝 Editando: AppService.java"*, *"🔍 Inspeccionando código..."*).
 - **Gestión de Brain & Planes:** Detecta automáticamente `implementation_plan.md` y `walkthrough.md`. Puedes revisar el resumen estructurado en tu teléfono y pulsar **[ ▶️ Ejecutar Plan ]** con un solo toque.
 
 ### 2. ⏱️ Motor Autónomo Guiado por Actividad (Zero Timeouts)
 - **Sin Cortes Forzados de Tiempo:** Se eliminaron los límites arbitrarios tradicionales (como el timeout fijo de 300s). El agente puede trabajar de forma autónoma durante 10, 20 o más de 30 minutos si la tarea lo requiere (ej. refactorizaciones de más de 120 pasos).
-- **Idle Watchdog Dinámico (`STEP_IDLE_TIMEOUT`):** El temporizador de inactividad se reinicia continuamente a cero con cada cambio de paso, lectura de archivo o escritura en el log. Solo se detiene si la IA permanece en silencio absoluto sin ningún avance durante 180 segundos.
+- **Idle Watchdog Dinámico (`STEP_IDLE_TIMEOUT` = 360s):** El temporizador de inactividad se reinicia continuamente a cero con cada cambio de paso, lectura de archivo o escritura en el log. Dispone de 6 minutos completos por paso, permitiendo a modelos con pensamiento profundo (*thinking models*) razonar sin prisas ni riesgo de cancelaciones abruptas.
 - **Supresión de Consolas en Windows (`CREATE_NO_WINDOW`):** Todo se ejecuta en segundo plano invisible. Ni `agy` ni sus servidores MCP (`chrome-devtools-mcp`, `antigravity-mem`) abren consolas emergentes en tu pantalla.
 - **Limpieza en Árbol (`Tree-Kill`):** En caso de cancelación, se eliminan los procesos en cascada vía `taskkill /F /T` para garantizar cero procesos huérfanos.
 
@@ -179,7 +181,8 @@ pwsh -File install_bot_service.ps1
 | `/sessions` | Lista las conversaciones guardadas del proyecto activo. | `[ 📌 <Título> ]` + `[ ➕ Hilo Limpio ]` |
 | `/session <id>` | Salto directo a una sesión por su identificador UUID. | Ficha de sesión. |
 | `/exit_session` | Sale de la sesión activa y activa el *Modo Hilo Limpio*. | `[ 💬 Entrar a Sesión ]` |
-| `/plan` | Muestra el resumen del plan de implementación (`implementation_plan.md`). | `[ ▶️ Ejecutar Plan ]` |
+| `/plan [tarea]` | **Atajo:** Genera plan de arquitectura formal o muestra el `implementation_plan.md` actual. | `[ ▶️ Ejecutar Plan ]` |
+| `/mode` o `/modos` | Alterna modo de ejecución: ⚡ Directo (`accept-edits`) vs 🧠 Planificación (`plan`). | `[ ⚡ Directo ]`, `[ 🧠 Plan ]` |
 | `/walkthrough` | Muestra el informe de tareas y cambios implementados (`walkthrough.md`). | Documento descargable. |
 | `/diff` | Muestra el diff de cambios no commiteados con color sintáctico. | `[ ✅ Commit ]`, `[ 🗑️ Revertir ]` |
 | `/commit [msg]` | Realiza commit y push. Si omites el mensaje, la IA lo genera. | Botón vigilar CI/CD. |
@@ -190,7 +193,7 @@ pwsh -File install_bot_service.ps1
 | `/branches` | Muestra las ramas locales recientes ordenadas por actividad. | `[ 🔀 Cambiar a <Rama> ]` |
 | `/branch <nom>` | Cambia a la rama indicada o crea una nueva si no existe. | Confirmación de rama. |
 | `/revert` | Descarta modificaciones locales (`git restore . && git clean -fd`). | Confirmación de seguridad. |
-| `/models` | Selector de modelo de IA (Gemini 3.8 Flash, Claude Sonnet, etc.). | Botones de modelos. |
+| `/models` | Selector de modelo de IA (Auto-Router, Gemini Flash, Claude, etc.). | Botones de modelos. |
 | `/cmd <cmd>` | Terminal remota para ejecutar cualquier orden (`npm test`, `dir`). | Salida de consola. |
 | 📸 *(Foto)* | Envía una captura de pantalla con texto para análisis visual. | Respuesta multimodal. |
 
@@ -204,8 +207,9 @@ pwsh -File install_bot_service.ps1
 | `ANTIGRAVITY_USER_ID` | ID de Telegram del usuario autorizado (Whitelist). | *(Obligatorio)* |
 | `ANTIGRAVITY_WORKSPACE_ROOTS` | Rutas raíz para escanear repositorios (separadas por coma). | `C:\MisProyectos` |
 | `ANTIGRAVITY_DEFAULT_PROJECT` | Repositorio seleccionado por defecto al arrancar. | `C:\MisProyectos\MiApp` |
-| `ANTIGRAVITY_DEFAULT_MODEL` | Modelo de IA predeterminado para el CLI. | `gemini-3.8-flash-high` |
-| `ANTIGRAVITY_STEP_IDLE_TIMEOUT` | Segundos máximos de inactividad tolerados entre pasos de IA. | `180` |
+| `ANTIGRAVITY_DEFAULT_MODEL` | Modelo de IA predeterminado para el CLI. | `auto` |
+| `ANTIGRAVITY_DEFAULT_MODE` | Modo inicial de ejecución (`accept-edits` o `plan`). | `accept-edits` |
+| `ANTIGRAVITY_STEP_IDLE_TIMEOUT` | Segundos máximos de inactividad tolerados entre pasos de IA. | `360` (6 min) |
 | `ANTIGRAVITY_MAX_TASK_TIMEOUT` | Techo máximo global en segundos (`0` = deshabilitado). | `0` |
 | `ANTIGRAVITY_DEFAULT_AUTOPUSH` | Estado inicial del modo Turbo AutoPush (`true`/`false`). | `false` |
 | `ANTIGRAVITY_WATCHDOG_ENABLED` | Activar/desactivar monitor de batería y cortes de luz. | `true` |

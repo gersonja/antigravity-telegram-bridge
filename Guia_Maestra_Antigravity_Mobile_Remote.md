@@ -201,6 +201,14 @@ Permite un flujo de trabajo 100% manos libres en movilidad. Cuando está activad
 
 ## 9. Robustez Técnica y Manejo de Errores
 
+- **Motor Guiado por Pasos Activos (Zero Timeouts Arbitrarios):**  
+  Eliminación de cortes fijos (como el antiguo timeout de 300s). El puente implementa un *Idle Watchdog* (`STEP_IDLE_TIMEOUT = 180s`) que monitorea `transcript.jsonl` y resetea continuamente el contador a cero cada vez que el agente cambia de paso o edita un archivo. Tareas masivas de más de 120 pasos (20-30 minutos) corren de principio a fin sin interrupciones.
+- **Supresión Total de Consolas en Windows (`CREATE_NO_WINDOW`):**  
+  Tanto `agy` como los servidores MCP hijos (`chrome-devtools-mcp`, `antigravity-mem`) se ejecutan con banderas de supresión de ventana (`CREATE_NO_WINDOW` y `SW_HIDE`), impidiendo que aparezcan consolas de comandos vacías o parpadeantes en el escritorio.
+- **Liquidación en Cascada (`kill_process_tree`):**  
+  En caso de cancelación o detención por inactividad, se ejecuta `taskkill /F /T /PID` para asegurar que el proceso padre y todos sus subprocesos hijos de Node y PowerShell se cierren limpiamente sin dejar procesos huérfanos en memoria.
+- **Auto-Commit Asistido por IA Blindado:**  
+  La generación automática de mensajes de commit utiliza `--disable-slash-commands`, un timeout de 90s y validación estricta contra mensajes de error, haciendo un *fallback* inmediato al prompt original si la IA demora, protegiendo el historial de Git.
 - **Prevención de Errores de Entidades (`Can't parse entities`):**  
   Implementación de `sanitize_telegram_markdown()` y `safe_edit_message()` / `safe_reply_message()`. Todo texto arbitrario o fragmento de código de la IA se depura para evitar fallos de parseo de Markdown. Si Telegram rechaza el formato, el bot realiza un *fallback* automático a texto plano transparente.
 - **División Inteligente de Salidas Extensas (`send_smart_message`):**  

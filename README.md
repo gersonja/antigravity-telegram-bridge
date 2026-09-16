@@ -65,9 +65,9 @@ graph TD
 - **Cancelación Táctil en 1 Toque:** Mientras Antigravity trabaja, el mensaje de estado en tiempo real muestra el botón **[ 🛑 Detener / Cancelar Tarea ]**, permitiendo fulminar cualquier proceso al instante.
 - **Comandos de Emergencia:** Envía `/stop`, `/cancel`, `/detener` o `/cancelar` para abortar tareas accidentales o bucles no deseados en milisegundos.
 
-### 4. 🛡️ Guardrails de Seguridad Inviolables del Entorno
-- **Prohibido Localhost:** El agente tiene terminantemente prohibido levantar servidores web, microservicios en background o daemons en `localhost` (`node dist/main.js`, `npm run start:dev`, `redis-server`). Toda validación local es estrictamente estática (`npm run build`, `tsc --noEmit`). Todo el entorno de ejecución corre en el servidor de producción con PM2.
-- **Prohibido SRI / Fiscal sin Orden Expresa:** Prohibición estricta de emitir facturas electrónicas, notas de crédito o interactuar con webservices del SRI (incluso en pruebas) a menos que el usuario lo solicite explícitamente en su mensaje.
+### 4. 🛡️ Arquitectura Multi-Proyecto y Aislamiento de Reglas
+- **100% Agnóstico al Dominio:** El puente es un orquestador universal de infraestructura móvil que no hardcodea reglas de un negocio en particular.
+- **Carga Dinámica de Contexto:** Cada repositorio gestiona sus propias directrices de arquitectura, políticas de seguridad y restricciones de ejecución mediante sus archivos locales (`.ai/rules/`, `AGENTS.md`, `GEMINI.md`). El agente de Antigravity las lee y aplica automáticamente según el proyecto activo seleccionado.
 
 ### 5. ▶️ Reanudación Determinística Exclusiva para Emergencias (`[ ▶️ Continuar Tarea ]`)
 - **UX Libre de Confusiones:** Cuando una tarea concluye con éxito (`code == 0`), el mensaje muestra claramente `✅ Tarea Concluida con Éxito` y el botón de continuar **se oculta automáticamente**, evitando clics redundantes.

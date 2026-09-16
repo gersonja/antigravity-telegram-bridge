@@ -1180,6 +1180,75 @@ def get_live_execution_step(session_id: Optional[str], min_timestamp: float = 0.
     step, _ = get_live_execution_step_and_mtime(session_id, min_timestamp)
     return step
 
+def get_final_response_from_transcript(session_id: Optional[str], min_timestamp: float = 0.0) -> Optional[str]:
+    """
+    Verifica si el modelo ya emitió su respuesta final (PLANNER_RESPONSE sin tool_calls y con contenido)
+    dentro del turno actual (timestamp >= min_timestamp).
+    Esto es crucial para evitar que el bot se quede esperando indefinidamente si el agente dejó
+    un servicio en segundo plano (daemon como node dist/main.js o vite) manteniendo abiertas las tuberías de salida.
+    """
+    if not session_id:
+        return None
+
+    target_dir = None
+    target_mtime = -1.0
+    for root in [IDE_BRAIN_DIR, CLI_BRAIN_DIR]:
+        p = os.path.join(root, session_id)
+        if os.path.exists(p):
+            try:
+                m = os.path.getmtime(p)
+                if m > target_mtime:
+                    target_mtime = m
+                    target_dir = p
+            except Exception:
+                if not target_dir:
+                    target_dir = p
+
+    if not target_dir:
+        return None
+
+    sys_gen = os.path.join(target_dir, ".system_generated")
+    log_candidates = []
+    chunks_dir = os.path.join(sys_gen, "logs", "chunks", "transcript")
+    if os.path.exists(chunks_dir):
+        try:
+            chunk_files = sorted([os.path.join(chunks_dir, f) for f in os.listdir(chunks_dir) if f.endswith(".jsonl")])
+            if chunk_files:
+                log_candidates.append(chunk_files[-1])
+        except Exception:
+            pass
+
+    main_log = os.path.join(sys_gen, "logs", "transcript.jsonl")
+    if os.path.exists(main_log):
+        log_candidates.append(main_log)
+
+    for log_path in log_candidates:
+        try:
+            l_mtime = os.path.getmtime(log_path)
+            if l_mtime >= min_timestamp:
+                with open(log_path, "rb") as f:
+                    f.seek(0, os.SEEK_END)
+                    size = f.tell()
+                    f.seek(max(0, size - 16384), os.SEEK_SET)
+                    chunk = f.read().decode("utf-8", errors="ignore")
+                lines = [l.strip() for l in chunk.splitlines() if l.strip()]
+                if lines:
+                    last_line = lines[-1]
+                    try:
+                        data = json.loads(last_line)
+                        if (
+                            data.get("type") == "PLANNER_RESPONSE"
+                            and not data.get("tool_calls")
+                            and data.get("content")
+                            and str(data.get("content")).strip()
+                        ):
+                            return str(data.get("content")).strip()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+    return None
+
 def get_newest_brain_session_id(after_timestamp: float) -> Optional[str]:
     """Detecta la carpeta de sesión más reciente en el cerebro creada o modificada después de after_timestamp."""
     candidates = []
@@ -1304,6 +1373,25 @@ async def execute_antigravity_task(
                     last_seen_mtime = max(last_seen_mtime, act_mtime)
 
             idle_elapsed = now - last_activity_time
+
+            # 2b. Detección proactiva de respuesta final emitida por el modelo
+            # Si el modelo ya emitió su respuesta final completa y lleva más de 10s inactivo,
+            # significa que la tarea concluyó pero subprocesos hijos (ej. node dist/main.js)
+            # mantienen abiertas las tuberías de salida. Liberamos y entregamos la respuesta de inmediato.
+            if idle_elapsed > 10:
+                final_resp = get_final_response_from_transcript(
+                    active_session_tracker,
+                    min_timestamp=start_time - 3,
+                )
+                if final_resp:
+                    kill_process_tree(proc.pid)
+                    try:
+                        await comm_task
+                    except Exception:
+                        pass
+                    code = 0
+                    output = final_resp
+                    break
 
             # 3. Timeout por inactividad de paso individual (reseteado con cada actividad detectada)
             if STEP_IDLE_TIMEOUT > 0 and idle_elapsed > STEP_IDLE_TIMEOUT:

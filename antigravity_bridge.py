@@ -1030,19 +1030,92 @@ async def send_smart_message(
 # =============================================================================
 # EJECUCIÓN ASÍNCRONA DE ANTIGRAVITY (AGY CLI)
 # =============================================================================
-def get_live_execution_step_and_mtime(session_id: Optional[str]) -> Tuple[str, float]:
-    """Lee el último paso en transcript.jsonl y el timestamp de modificación del log."""
+def get_live_execution_step_and_mtime(session_id: Optional[str], project_dir: Optional[str] = None) -> Tuple[str, float]:
+    """
+    Monitorea la actividad en tiempo real del cerebro de Antigravity (steps, tasks, chunks de log, transcript, messages y repo git).
+    Devuelve la descripción del paso activo o herramienta ejecutándose y el timestamp (mtime) de la actividad más reciente detectada.
+    """
     if not session_id:
         return "Analizando requerimientos...", 0.0
-    for root in [CLI_BRAIN_DIR, IDE_BRAIN_DIR]:
-        log_path = os.path.join(root, session_id, ".system_generated", "logs", "transcript.jsonl")
-        if os.path.exists(log_path):
+
+    # Localizar el directorio de la sesión priorizando IDE_BRAIN_DIR sobre CLI_BRAIN_DIR
+    target_dir = None
+    target_mtime = -1.0
+    for root in [IDE_BRAIN_DIR, CLI_BRAIN_DIR]:
+        p = os.path.join(root, session_id)
+        if os.path.exists(p):
             try:
-                mtime = os.path.getmtime(log_path)
+                m = os.path.getmtime(p)
+                if m > target_mtime:
+                    target_mtime = m
+                    target_dir = p
+            except Exception:
+                if not target_dir:
+                    target_dir = p
+
+    if not target_dir:
+        return "Iniciando sesión...", 0.0
+
+    sys_gen = os.path.join(target_dir, ".system_generated")
+    max_activity_mtime = 0.0
+    active_step_label = "Ejecutando código..."
+    latest_step_num = None
+
+    # 1. Monitoreo de pasos internos individuales (.system_generated/steps/<n>/output.txt)
+    steps_dir = os.path.join(sys_gen, "steps")
+    if os.path.exists(steps_dir):
+        try:
+            step_nums = [int(x) for x in os.listdir(steps_dir) if x.isdigit()]
+            if step_nums:
+                latest_step_num = max(step_nums)
+                step_path = os.path.join(steps_dir, str(latest_step_num))
+                out_file = os.path.join(step_path, "output.txt")
+                s_mtime = os.path.getmtime(out_file) if os.path.exists(out_file) else os.path.getmtime(step_path)
+                if s_mtime > max_activity_mtime:
+                    max_activity_mtime = s_mtime
+                    active_step_label = f"⚡ Paso #{latest_step_num}"
+        except Exception:
+            pass
+
+    # 2. Monitoreo de tareas en segundo plano (.system_generated/tasks/task-*.log)
+    tasks_dir = os.path.join(sys_gen, "tasks")
+    if os.path.exists(tasks_dir):
+        try:
+            for f in os.listdir(tasks_dir):
+                if f.endswith(".log"):
+                    t_path = os.path.join(tasks_dir, f)
+                    t_mtime = os.path.getmtime(t_path)
+                    if t_mtime > max_activity_mtime:
+                        max_activity_mtime = t_mtime
+                        t_name = f.replace(".log", "")
+                        active_step_label = f"⚙️ Tarea `{t_name}` en curso"
+        except Exception:
+            pass
+
+    # 3. Monitoreo de logs de transcripción (tanto chunks/transcript/*.jsonl como transcript.jsonl)
+    log_candidates = []
+    chunks_dir = os.path.join(sys_gen, "logs", "chunks", "transcript")
+    if os.path.exists(chunks_dir):
+        try:
+            chunk_files = sorted([os.path.join(chunks_dir, f) for f in os.listdir(chunks_dir) if f.endswith(".jsonl")])
+            if chunk_files:
+                log_candidates.append(chunk_files[-1])
+        except Exception:
+            pass
+
+    main_log = os.path.join(sys_gen, "logs", "transcript.jsonl")
+    if os.path.exists(main_log):
+        log_candidates.append(main_log)
+
+    for log_path in log_candidates:
+        try:
+            l_mtime = os.path.getmtime(log_path)
+            if l_mtime >= max_activity_mtime:
+                max_activity_mtime = max(max_activity_mtime, l_mtime)
                 with open(log_path, "rb") as f:
                     f.seek(0, os.SEEK_END)
                     size = f.tell()
-                    f.seek(max(0, size - 4096), os.SEEK_SET)
+                    f.seek(max(0, size - 8192), os.SEEK_SET)
                     chunk = f.read().decode("utf-8", errors="ignore")
                 lines = [l.strip() for l in chunk.splitlines() if l.strip()]
                 for line in reversed(lines):
@@ -1054,43 +1127,87 @@ def get_live_execution_step_and_mtime(session_id: Optional[str]) -> Tuple[str, f
                             t_name = tc.get("name", "")
                             args = tc.get("args", {})
                             if t_name == "run_command":
-                                cmd = str(args.get("CommandLine", "")).strip('\"\'')
-                                return (f"💻 Terminal: `{cmd[:28]}...`" if len(cmd) > 28 else f"💻 Terminal: `{cmd}`"), mtime
+                                cmd = str(args.get("CommandLine", "")).strip("\"'")
+                                active_step_label = (f"💻 Terminal: `{cmd[:28]}...`" if len(cmd) > 28 else f"💻 Terminal: `{cmd}`")
                             elif t_name in ["replace_file_content", "multi_replace_file_content", "write_to_file"]:
-                                tf = str(args.get("TargetFile", "")).strip('\"\'')
-                                return f"📝 Editando: `{os.path.basename(tf)}`", mtime
+                                tf = str(args.get("TargetFile", "")).strip("\"'")
+                                active_step_label = f"📝 Editando: `{os.path.basename(tf)}`"
                             elif t_name in ["view_file", "grep_search", "list_dir"]:
-                                return "🔍 Inspeccionando código...", mtime
+                                active_step_label = "🔍 Inspeccionando código..."
+                            elif t_name == "ask_question":
+                                active_step_label = "❓ Consulta de requisitos..."
+                            elif t_name == "schedule":
+                                active_step_label = "⏱️ Temporizador en espera..."
+                            elif t_name == "manage_task":
+                                active_step_label = "⚙️ Gestionando subproceso..."
                             else:
-                                return f"⚙️ Herramienta: `{t_name}`", mtime
+                                active_step_label = f"⚙️ Herramienta: `{t_name}`"
+                            break
                         elif data.get("type") == "PLANNER_RESPONSE":
-                            return "🧠 Razonando respuesta...", mtime
+                            if latest_step_num:
+                                active_step_label = f"🧠 Razonando respuesta (paso #{latest_step_num})..."
+                            else:
+                                active_step_label = "🧠 Razonando respuesta..."
+                            break
                     except Exception:
                         continue
-                return "Ejecutando código...", mtime
-            except Exception:
-                pass
-    return "Ejecutando código...", 0.0
+        except Exception:
+            pass
 
-def get_live_execution_step(session_id: Optional[str]) -> str:
+    # 4. Monitoreo de mensajes (.system_generated/messages/*.json)
+    messages_dir = os.path.join(sys_gen, "messages")
+    if os.path.exists(messages_dir):
+        try:
+            for f in os.listdir(messages_dir):
+                if f.endswith(".json"):
+                    mp = os.path.join(messages_dir, f)
+                    mm = os.path.getmtime(mp)
+                    if mm > max_activity_mtime:
+                        max_activity_mtime = mm
+        except Exception:
+            pass
+
+    # 5. Monitoreo del repositorio Git en el proyecto de trabajo si aplica
+    if project_dir and os.path.isdir(project_dir):
+        git_dir = os.path.join(project_dir, ".git")
+        if os.path.exists(git_dir):
+            for gfile in ["index", "HEAD", "logs/HEAD", "COMMIT_EDITMSG"]:
+                gp = os.path.join(git_dir, gfile)
+                if os.path.exists(gp):
+                    try:
+                        gm = os.path.getmtime(gp)
+                        if gm > max_activity_mtime:
+                            max_activity_mtime = gm
+                            active_step_label = "📦 Actividad Git / Commit..."
+                    except Exception:
+                        pass
+
+    return active_step_label, max_activity_mtime
+
+def get_live_execution_step(session_id: Optional[str], project_dir: Optional[str] = None) -> str:
     """Wrapper de compatibilidad para telemetría en vivo del paso activo."""
-    step, _ = get_live_execution_step_and_mtime(session_id)
+    step, _ = get_live_execution_step_and_mtime(session_id, project_dir)
     return step
 
 def get_newest_brain_session_id(after_timestamp: float) -> Optional[str]:
-    """Detecta si se ha creado una nueva carpeta de sesión en el cerebro después del inicio."""
-    for root in [CLI_BRAIN_DIR, IDE_BRAIN_DIR]:
+    """Detecta la carpeta de sesión más reciente en el cerebro creada o modificada después de after_timestamp."""
+    candidates = []
+    for root in [IDE_BRAIN_DIR, CLI_BRAIN_DIR]:
         if os.path.exists(root):
             try:
                 for entry in os.scandir(root):
                     if entry.is_dir():
                         try:
-                            if entry.stat().st_mtime >= (after_timestamp - 3):
-                                return entry.name
+                            m = entry.stat().st_mtime
+                            if m >= (after_timestamp - 5):
+                                candidates.append((m, entry.name))
                         except Exception:
                             pass
             except Exception:
                 pass
+    if candidates:
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        return candidates[0][1]
     return None
 
 async def execute_antigravity_task(
@@ -1146,6 +1263,7 @@ async def execute_antigravity_task(
 
     start_time = time.time()
     last_activity_time = start_time
+    last_seen_mtime = 0.0
     last_step = "Iniciando análisis..."
     active_session_tracker = target_session
     code = 0
@@ -1183,15 +1301,20 @@ async def execute_antigravity_task(
                 if detected:
                     active_session_tracker = detected
 
-            # 2. Telemetría de paso y actividad del transcript
-            curr_step, log_mtime = get_live_execution_step_and_mtime(active_session_tracker)
-            if curr_step != last_step or (log_mtime and log_mtime > last_activity_time):
+            # 2. Telemetría de paso y actividad del cerebro / pasos / git
+            curr_step, act_mtime = get_live_execution_step_and_mtime(
+                active_session_tracker,
+                project_dir=state.current_project
+            )
+            if curr_step != last_step or (act_mtime and act_mtime > last_seen_mtime):
                 last_activity_time = now
                 last_step = curr_step
+                if act_mtime:
+                    last_seen_mtime = max(last_seen_mtime, act_mtime)
 
             idle_elapsed = now - last_activity_time
 
-            # 3. Timeout por inactividad de paso (reseteado con cada actividad detectada)
+            # 3. Timeout por inactividad de paso individual (reseteado con cada actividad detectada)
             if idle_elapsed > STEP_IDLE_TIMEOUT:
                 kill_process_tree(proc.pid)
                 try:
@@ -1199,7 +1322,10 @@ async def execute_antigravity_task(
                 except Exception:
                     pass
                 code = -1
-                output = f"⚠️ Timeout por inactividad: Antigravity no registró cambios de paso ni actividad durante {STEP_IDLE_TIMEOUT}s (tiempo total: {int(total_elapsed)}s). Tarea detenida limpiamente."
+                output = (
+                    f"⚠️ Timeout por inactividad: Antigravity no registró cambios de paso ni actividad interna "
+                    f"durante {STEP_IDLE_TIMEOUT}s (tiempo total acumulado: {int(total_elapsed)}s). Tarea detenida limpiamente."
+                )
                 break
 
             # 4. Límite máximo global de seguridad (solo si MAX_TASK_TIMEOUT > 0)
@@ -1224,7 +1350,7 @@ async def execute_antigravity_task(
                     f"🤖 *Modelo:* `{model_badge}` | ⚙️ *Modo:* `{mode_icon}`\n"
                     f"💬 *Sesión:* {display_session}\n\n"
                     f"⏳ *Paso activo:* {curr_step}\n"
-                    f"⏱️ _{elapsed_int}s transcurridos_ · _(hace {idle_int}s)_",
+                    f"⏱️ _{elapsed_int}s transcurridos_ · _(inactividad: {idle_int}s / {STEP_IDLE_TIMEOUT}s)_",
                     parse_mode=constants.ParseMode.MARKDOWN,
                 )
             except Exception:

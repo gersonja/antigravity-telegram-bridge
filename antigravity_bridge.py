@@ -1408,6 +1408,22 @@ async def execute_antigravity_task(
         cmd_args += ["--conversation", target_session]
     
     effective_prompt = prompt
+    # Si el usuario aprueba el plan o solicita comenzar la ejecución, desbloquear automáticamente modo directo
+    approval_keywords = [
+        "aprobado", "apruebo", "proceder", "ejecutar el plan", "ejecuta el plan",
+        "comencemos", "adelante con el plan", "comienza con el plan", "/approve", "/aprobar",
+        "iniciar el plan", "ejecuta", "dale", "aplícalo", "aplicalo", "procedamos"
+    ]
+    p_check = prompt.strip().lower()
+    is_plan_approval = any(p_check.startswith(kw) or f" {kw}" in p_check for kw in approval_keywords)
+
+    if is_plan_approval and effective_mode == "plan":
+        effective_mode = "accept-edits"
+        mode_icon = "⚡ Directo"
+        state.execution_mode = "accept-edits"
+        state.save()
+        logger.info("[Execute Task] Detección de aprobación de plan. Conmutando automáticamente a modo directo para ejecutar.")
+
     if effective_mode == "plan":
         plan_guard = (
             "⚠️ [MODO PLANIFICACIÓN ESTRICTO ACTIVADO - PROHIBICIÓN TOTAL DE EJECUCIÓN]\n"
@@ -1642,15 +1658,16 @@ async def execute_antigravity_task(
         pass
 
     if not target_session:
-        latest = get_latest_conversation_id()
-        if latest:
-            state.active_session_id = latest[0]
-            state.active_session_title = latest[1]
-            state.save()
-        elif active_session_tracker:
+        if active_session_tracker:
             state.active_session_id = active_session_tracker
             state.active_session_title = get_session_title(active_session_tracker)
             state.save()
+        else:
+            latest = get_latest_conversation_id()
+            if latest:
+                state.active_session_id = latest[0]
+                state.active_session_title = latest[1]
+                state.save()
     else:
         state.active_session_title = get_session_title(target_session)
         state.save()
@@ -2680,6 +2697,36 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption="📄 Plan de implementación completo para leer en móvil:",
     )
 
+async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Aprueba formalmente el plan de implementación y comienza su ejecución en modo directo."""
+    if not is_authorized(update):
+        return
+
+    msg_target = update.effective_message
+    if not state.current_project:
+        await safe_reply_message(msg_target, "⚠️ Primero selecciona un proyecto con `/projects`.")
+        return
+
+    if not state.active_session_id:
+        await safe_reply_message(msg_target, "⚠️ No hay una sesión activa para ejecutar el plan. Selecciona una con `/sessions`.")
+        return
+
+    plan_file = find_brain_artifact(state.active_session_id, "implementation_plan.md")
+    if not plan_file or not os.path.exists(plan_file):
+        await safe_reply_message(msg_target, "⚠️ La sesión activa no tiene un documento de plan registrado.")
+        return
+
+    state.execution_mode = "accept-edits"
+    state.save()
+
+    prompt = (
+        "El plan de implementación ha sido formalmente revisado y APROBADO por el usuario. "
+        "Por favor procede de inmediato a ejecutar paso a paso todas las modificaciones de código, "
+        "creación de componentes, pruebas y verificación según lo especificado en el plan."
+    )
+    await safe_reply_message(msg_target, "🚀 *Plan Aprobado:* Conmutando a modo directo y comenzando ejecución inmediata...")
+    await execute_antigravity_task(update, context, prompt, mode="accept-edits")
+
 async def cmd_walkthrough(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
@@ -3657,6 +3704,10 @@ def main():
 
     # Cerebro, Modos y Artefactos
     app.add_handler(CommandHandler("plan", cmd_plan))
+    app.add_handler(CommandHandler("approve", cmd_approve))
+    app.add_handler(CommandHandler("aprobar", cmd_approve))
+    app.add_handler(CommandHandler("exec", cmd_approve))
+    app.add_handler(CommandHandler("ejecutar", cmd_approve))
     app.add_handler(CommandHandler("mode", cmd_mode))
     app.add_handler(CommandHandler("modos", cmd_mode))
     app.add_handler(CommandHandler("walkthrough", cmd_walkthrough))

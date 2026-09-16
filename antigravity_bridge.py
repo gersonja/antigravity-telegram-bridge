@@ -177,7 +177,8 @@ def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) 
     """
     Determina el modelo efectivo a utilizar por Antigravity CLI.
     Si selected_model == 'auto', clasifica semánticamente el prompt y el modo:
-      - Utiliza gemini-3.8-flash-medium por defecto para máxima estabilidad, velocidad y evitar saturación 503 de servidores.
+      - Utiliza gemini-3.7-flash-high por defecto para máxima estabilidad, velocidad instantánea y evitar saturación 503 de servidores.
+      - Utiliza claude-sonnet-4-6 para tareas profundas de arquitectura y planificación exhaustiva.
       - Si el usuario selecciona explícitamente otro modelo en /models, se respeta esa elección.
     Retorna (effective_model_id, badge_for_telegram).
     """
@@ -187,7 +188,7 @@ def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) 
         return selected_model, badge
 
     if mode == "plan":
-        return "gemini-3.8-flash-medium", "🎯 Auto (🧠 Medium Plan)"
+        return "gemini-3.7-flash-high", "🎯 Auto (🧠 3.7 Plan)"
 
     p_lower = prompt.lower()
     deep_keywords = [
@@ -203,9 +204,9 @@ def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) 
     deep_score = sum(1 for kw in deep_keywords if kw in p_lower)
 
     if len(prompt) > 500 or deep_score >= 1:
-        return "gemini-3.8-flash-medium", "🎯 Auto (⚡ Medium)"
+        return "claude-sonnet-4-6", "🎯 Auto (🧠 Sonnet Deep)"
     
-    return "gemini-3.8-flash-medium", "🎯 Auto (🚀 Medium)"
+    return "gemini-3.7-flash-high", "🎯 Auto (⚡ 3.7 Flash)"
 
 # =============================================================================
 # GESTOR DE ESTADO PERSISTENTE
@@ -279,6 +280,32 @@ def kill_process_tree(pid: Optional[int]):
             os.kill(pid, 9)
     except Exception as e:
         print(f"[Kill Process Tree] Error terminando PID {pid}: {e}")
+
+def stop_task_now() -> bool:
+    """Detiene forzosamente cualquier tarea de Antigravity en curso y limpia procesos huérfanos."""
+    global TASK_CANCEL_REQUESTED, CURRENT_TASK_PROC
+    TASK_CANCEL_REQUESTED = True
+    stopped_any = False
+
+    if CURRENT_TASK_PROC and hasattr(CURRENT_TASK_PROC, "pid") and CURRENT_TASK_PROC.pid:
+        pid = CURRENT_TASK_PROC.pid
+        kill_process_tree(pid)
+        stopped_any = True
+
+    # En Windows, barrido forzoso para asegurar que ningún proceso 'agy.exe' quede colgado reintentando
+    if sys.platform == "win32":
+        try:
+            creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+            subprocess.run(
+                ["taskkill", "/F", "/IM", "agy.exe", "/T"],
+                capture_output=True,
+                creationflags=creation_flags,
+            )
+            stopped_any = True
+        except Exception:
+            pass
+
+    return stopped_any
 
 def run_cmd(cmd: str, cwd: Optional[str] = None, timeout: int = 60) -> Tuple[int, str]:
     """Ejecuta un comando sincrónico rápido devolviendo (code, output)."""
@@ -1349,6 +1376,7 @@ async def execute_antigravity_task(
     active_session_tracker = target_session
     code = 0
     output = ""
+    was_cancelled = False
 
     creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
 
@@ -1369,9 +1397,10 @@ async def execute_antigravity_task(
 
         while not comm_task.done():
             if TASK_CANCEL_REQUESTED:
-                kill_process_tree(proc.pid)
+                was_cancelled = True
+                stop_task_now()
                 try:
-                    await comm_task
+                    comm_task.cancel()
                 except Exception:
                     pass
                 code = -1
@@ -1385,11 +1414,13 @@ async def execute_antigravity_task(
             now = time.time()
             total_elapsed = now - start_time
 
-            # 1. Detección en vivo de sesión nueva si empezó sin ID
-            if not active_session_tracker:
-                detected = get_newest_brain_session_id(start_time)
-                if detected:
+            # 1. Detección en vivo de sesión nueva o reasignación si agy inició un nuevo UUID
+            if not active_session_tracker or (total_elapsed > 3 and idle_elapsed > 3):
+                detected = get_newest_brain_session_id(start_time - 2)
+                if detected and detected != active_session_tracker:
+                    logger.info(f"[Session Tracker] Reasignando sesión detectada en vivo: {active_session_tracker} -> {detected}")
                     active_session_tracker = detected
+                    last_activity_time = now
 
             # 2. Telemetría de paso y actividad del cerebro / pasos / tareas (filtrado por inicio)
             curr_step, act_mtime = get_live_execution_step_and_mtime(
@@ -1414,7 +1445,7 @@ async def execute_antigravity_task(
                     min_timestamp=start_time - 3,
                 )
                 if final_resp:
-                    kill_process_tree(proc.pid)
+                    stop_task_now()
                     try:
                         await comm_task
                     except Exception:
@@ -1425,7 +1456,7 @@ async def execute_antigravity_task(
 
             # 3. Timeout por inactividad de paso individual (reseteado con cada actividad detectada)
             if STEP_IDLE_TIMEOUT > 0 and idle_elapsed > STEP_IDLE_TIMEOUT:
-                kill_process_tree(proc.pid)
+                stop_task_now()
                 try:
                     await comm_task
                 except Exception:
@@ -1439,7 +1470,7 @@ async def execute_antigravity_task(
 
             # 4. Límite máximo global de seguridad (solo si MAX_TASK_TIMEOUT > 0)
             if MAX_TASK_TIMEOUT > 0 and total_elapsed > MAX_TASK_TIMEOUT:
-                kill_process_tree(proc.pid)
+                stop_task_now()
                 try:
                     await comm_task
                 except Exception:
@@ -1470,20 +1501,36 @@ async def execute_antigravity_task(
             except Exception:
                 pass
 
-            await asyncio.sleep(4)
+            await asyncio.sleep(2)
 
-        if comm_task.done() and code == 0:
-            stdout_bytes, stderr_bytes = await comm_task
-            stdout_str = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
-            stderr_str = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
-            code = proc.returncode if proc.returncode is not None else 0
-            output = (stdout_str + "\n" + stderr_str).strip()
+        # Captura post-bucle: si fue cancelado desde handle_callback o mientras completaba
+        if TASK_CANCEL_REQUESTED:
+            was_cancelled = True
+            code = -1
+            output = "🛑 *Tarea cancelada:* El proceso fue detenido de inmediato a petición del usuario."
+
+        elif comm_task.done() and code == 0:
+            try:
+                stdout_bytes, stderr_bytes = await comm_task
+                stdout_str = stdout_bytes.decode("utf-8", errors="replace") if stdout_bytes else ""
+                stderr_str = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
+                code = proc.returncode if proc.returncode is not None else 0
+                output = (stdout_str + "\n" + stderr_str).strip()
+            except asyncio.CancelledError:
+                was_cancelled = True
+                code = -1
+                output = "🛑 *Tarea cancelada:* El proceso fue detenido de inmediato a petición del usuario."
+            except Exception:
+                pass
 
     except Exception as e:
         code = -1
         output = f"⚠️ Error invocando agy: {str(e)}"
     finally:
         CURRENT_TASK_PROC = None
+        if was_cancelled:
+            code = -1
+            output = "🛑 *Tarea cancelada:* El proceso fue detenido de inmediato a petición del usuario."
         TASK_CANCEL_REQUESTED = False
 
     # Detección y recuperación automática ante error 503 (Servidores de Google saturados)
@@ -1493,8 +1540,10 @@ async def execute_antigravity_task(
         or "(code 503)" in output
         or "code 503" in output
     )
-    if is_503_capacity and "flash-high" in effective_model and not force_model:
-        fallback_model = "gemini-3.8-flash-medium"
+    if was_cancelled:
+        logger.info("[Auto-Fallback] Omitido porque el usuario canceló explícitamente la tarea.")
+    elif is_503_capacity and not force_model:
+        fallback_model = "gemini-3.7-flash-high"
         logger.warning(f"[503 Auto-Fallback] {effective_model} sin capacidad. Conmutando automáticamente a {fallback_model}...")
         try:
             await status_msg.delete()
@@ -1593,7 +1642,14 @@ async def execute_antigravity_task(
 
     reply_markup = InlineKeyboardMarkup(buttons)
 
-    if code == 0:
+    if was_cancelled:
+        status_icon = "🛑"
+        status_title = "Tarea Cancelada por el Usuario"
+        conclusion_badge = (
+            "\n\n🛑 *Estado:* `Cancelado a petición del usuario`\n"
+            "Todos los procesos fueron detenidos de inmediato. No se aplicó ninguna acción adicional."
+        )
+    elif code == 0:
         status_icon = "✅"
         status_title = "Tarea Concluida con Éxito"
         conclusion_badge = "\n\n🏁 *Estado:* `Completado con éxito` (Todo listo)."
@@ -2479,14 +2535,11 @@ async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
 
-    global TASK_CANCEL_REQUESTED, CURRENT_TASK_PROC
     msg_target = update.effective_message
-    if CURRENT_TASK_PROC and hasattr(CURRENT_TASK_PROC, "pid") and CURRENT_TASK_PROC.pid:
-        TASK_CANCEL_REQUESTED = True
-        kill_process_tree(CURRENT_TASK_PROC.pid)
-        await safe_reply_message(msg_target, "🛑 *Tarea detenida de inmediato.* El proceso fue cancelado.")
+    stopped = stop_task_now()
+    if stopped:
+        await safe_reply_message(msg_target, "🛑 *Tarea detenida de inmediato.* Se cancelaron todos los procesos en ejecución.")
     else:
-        run_cmd("taskkill /F /IM agy.exe /T")
         await safe_reply_message(msg_target, "ℹ️ No había ninguna tarea activa en ejecución (se verificó y limpió cualquier proceso residual).")
 
 async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3376,11 +3429,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await cmd_walkthrough(update, context)
 
         elif data == "stop_current_task":
-            global TASK_CANCEL_REQUESTED, CURRENT_TASK_PROC
-            TASK_CANCEL_REQUESTED = True
-            if CURRENT_TASK_PROC and hasattr(CURRENT_TASK_PROC, "pid") and CURRENT_TASK_PROC.pid:
-                kill_process_tree(CURRENT_TASK_PROC.pid)
-            await safe_edit_message(query, "🛑 *Cancelando tarea...*\nSe ha enviado la orden de detención inmediata.")
+            await query.answer("🛑 Cancelando tarea...", show_alert=False)
+            stop_task_now()
+            await safe_edit_message(query, "🛑 *Cancelando tarea...*\nSe ha enviado la orden de detención inmediata a todos los procesos.")
 
         elif data == "continue_task":
             if not state.active_session_id:

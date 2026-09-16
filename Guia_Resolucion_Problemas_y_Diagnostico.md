@@ -62,22 +62,25 @@ Mira el mensaje de progreso en tiempo real de Telegram:
 * Si el texto cambia (*"📝 Editando: Service.ts"*, *"💻 Terminal: git status"*), **el agente está trabajando activamente**, no está congelado.
 * Si el texto no cambia y el contador de segundos sigue subiendo, el agente podría estar esperando una red externa o ejecutando un comando de consola pesado.
 
-#### 2. Acción Inmediata: Detención Forzada
+#### 2. Acción Inmediata: Detención Forzada Instantánea
 Pulsa el botón táctil en Telegram:
 `[ 🛑 Detener / Cancelar Tarea ]`
 O envía por texto:
 ```text
 /stop
 ```
-El bot activará `kill_process_tree()`, invocando `taskkill /F /T` en Windows para fulminar el proceso de `agy.exe` y todos sus subprocesos hijos de Node y PowerShell en menos de un segundo.
+El bot activará el protocolo `stop_task_now()`:
+1. **Terminación del Árbol de Procesos (`kill_process_tree`):** Invoca `taskkill /F /T /PID <pid>` para fulminar el proceso raíz registrado.
+2. **Barrido de Procesos Huérfanos:** Ejecuta un barrido forzoso con `taskkill /F /IM agy.exe /T` para asegurar que ningún subproceso hijo o worker de Node/CLI quede colgado en segundo plano.
+3. **Bloqueo Inviolable de Auto-Reintentos y AutoPush:** Marca la bandera `was_cancelled = True`, anulando de forma inmediata cualquier reintento automático por error 503 y cancelando cualquier acción de AutoPush hacia Git.
 
 #### 3. ¿Cómo sé qué estaba haciendo el agente?
 El historial completo de razonamiento y herramientas de cada sesión se guarda en:
-📁 `~/.gemini/antigravity-ide/brain/<ID_SESION>/transcript.jsonl`
+📁 `~/.gemini/antigravity-cli/brain/<ID_SESION>/transcript.jsonl` (o `antigravity-ide/brain/`)
 
 Puedes inspeccionar los últimos pasos ejecutados en PowerShell con:
 ```powershell
-Get-Content "$env:USERPROFILE\.gemini\antigravity-ide\brain\<ID_SESION>\transcript.jsonl" -Tail 15
+Get-Content "$env:USERPROFILE\.gemini\antigravity-cli\brain\<ID_SESION>\transcript.jsonl" -Tail 15
 ```
 
 ---
@@ -117,10 +120,14 @@ El bot enviará una orden determinística que instruye a la IA a:
 
 ### Escenario F: Error 503 UNAVAILABLE (Saturación de Capacidad en Google)
 
-* **Síntoma:** El modelo devuelve `Error: UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server`.
-* **Causa:** Los servidores de Google para el modelo solicitado (frecuentemente modelos de razonamiento profundo como `flash-high`) alcanzaron temporalmente su límite global de concurrencia.
+* **Síntoma:** El modelo devuelve `Error: UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server` (o `gemini-3.8-flash-medium` entra en bucle de reintento infinito).
+* **Causa:** Los servidores de Google para la familia Gemini 3.8 pueden experimentar saturación global de capacidad en horas pico.
 * **Mecanismo de Resiliencia del Puente:**  
-  El puente analiza la salida de `agy`. Si detecta un error `code 503` o `No capacity available`, **cancela la tarea fallida e inmediatamente la relanza con `gemini-3.8-flash-medium`** notificándote por Telegram. `gemini-3.8-flash-medium` cuenta con enorme disponibilidad y responderá en segundos.
+  1. **Auto-Fallback a Gemini 3.7 Flash High:** Si una tarea falla con código 503 en 3.8, el puente conmuta automáticamente a **`gemini-3.7-flash-high`** (probado, ultrarrápido y con 100% de disponibilidad continua).
+  2. **Selección Manual Inmediata:** Desde Telegram, puedes ejecutar `/models` y elegir directamente:
+     * `💡 Gemini 3.7 Flash High` (velocidad instantánea, sin colas).
+     * `🧠 Claude Sonnet 4.6 (Thinking)` (máxima profundidad para arquitectura y refactors).
+  3. **Auto-Router Actualizado:** En modo `auto`, el bot prioriza `gemini-3.7-flash-high` para peticiones generales y `claude-sonnet-4-6` para análisis de arquitectura pesados.
 
 ---
 
@@ -131,6 +138,14 @@ El bot enviará una orden determinística que instruye a la IA a:
   El puente implementa una **doble compuerta de validación** antes de cualquier commit:
   1. **Validación de Éxito (`code == 0`):** Si la tarea terminó en timeout, error 503 o fue cancelada por el usuario con `/stop`, AutoPush **se desactiva automáticamente** y notifica que los cambios locales no fueron enviados.
   2. **Validación de Archivos Propios (`get_session_modified_files`):** Si la tarea concluyó pero el agente no tocó ningún archivo de código (por ejemplo, solo analizó o diseñó un plan), AutoPush **no tocará Git**, protegiendo cualquier archivo que tú estuvieras editando manualmente en tu computadora.
+
+---
+
+### Escenario H: Seguimiento Dinámico de Sesiones (IDE vs CLI)
+
+* **Problema:** Si seleccionas una sesión creada en el IDE (`~/.gemini/antigravity-ide/brain/`), `agy` CLI podría no encontrarla en su almacén local (`antigravity-cli/brain/`) y generar silenciosamente un nuevo UUID de sesión.
+* **Solución de Detección Dinámica:**  
+  Durante la ejecución, el puente vigila la creación de sesiones en tiempo real. Si a los 3 segundos la sesión asignada no registra actividad, el puente **detecta automáticamente la nueva sesión recién nacida en el CLI y reasigna el tracker en caliente**. De este modo, la telemetría nunca se queda congelada en *"Iniciando análisis..."* ni acumula falsos tiempos de inactividad.
 
 ---
 

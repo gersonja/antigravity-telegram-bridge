@@ -170,6 +170,9 @@ CONTINUE_TASK_PROMPT = (
     "ni comiences desde cero; avanza al siguiente paso pendiente o resume el estado final alcanzado si la tarea ya concluyó."
 )
 
+CURRENT_TASK_PROC = None
+TASK_CANCEL_REQUESTED = False
+
 def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) -> Tuple[str, str]:
     """
     Determina el modelo efectivo a utilizar por Antigravity CLI.
@@ -1347,6 +1350,9 @@ async def execute_antigravity_task(
 
     creation_flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
 
+    global CURRENT_TASK_PROC, TASK_CANCEL_REQUESTED
+    TASK_CANCEL_REQUESTED = False
+
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd_args,
@@ -1355,10 +1361,20 @@ async def execute_antigravity_task(
             stderr=asyncio.subprocess.PIPE,
             creationflags=creation_flags,
         )
+        CURRENT_TASK_PROC = proc
 
         comm_task = asyncio.create_task(proc.communicate())
 
         while not comm_task.done():
+            if TASK_CANCEL_REQUESTED:
+                kill_process_tree(proc.pid)
+                try:
+                    await comm_task
+                except Exception:
+                    pass
+                code = -1
+                output = "🛑 *Tarea cancelada:* El proceso fue detenido de inmediato a petición del usuario."
+                break
             try:
                 await context.bot.send_chat_action(chat_id=chat_id, action=constants.ChatAction.TYPING)
             except Exception:
@@ -1434,11 +1450,14 @@ async def execute_antigravity_task(
                 output = f"⚠️ Límite de seguridad alcanzado: La tarea superó el tiempo máximo global ({MAX_TASK_TIMEOUT}s). Proceso detenido."
                 break
 
-            # 5. Actualización periódica en Telegram
+            # 5. Actualización periódica en Telegram con botón de cancelación en vivo
             elapsed_int = int(total_elapsed)
             idle_int = int(idle_elapsed)
             display_session = f"`{active_session_tracker[:8]}...`" if active_session_tracker else "✨ Nueva Sesión"
             idle_indicator = f" · _(inactividad: {idle_int}s / {STEP_IDLE_TIMEOUT}s)_" if STEP_IDLE_TIMEOUT > 0 else ""
+            stop_markup = InlineKeyboardMarkup([
+                [InlineKeyboardButton("🛑 Detener / Cancelar Tarea", callback_data="stop_current_task")]
+            ])
             try:
                 await status_msg.edit_text(
                     f"🧠 *Antigravity trabajando...*\n"
@@ -1448,6 +1467,7 @@ async def execute_antigravity_task(
                     f"⏳ *Paso activo:* {curr_step}\n"
                     f"⏱️ _{elapsed_int}s transcurridos_{idle_indicator}",
                     parse_mode=constants.ParseMode.MARKDOWN,
+                    reply_markup=stop_markup,
                 )
             except Exception:
                 pass
@@ -1464,6 +1484,9 @@ async def execute_antigravity_task(
     except Exception as e:
         code = -1
         output = f"⚠️ Error invocando agy: {str(e)}"
+    finally:
+        CURRENT_TASK_PROC = None
+        TASK_CANCEL_REQUESTED = False
 
     total_secs = int(time.time() - start_time)
 
@@ -1502,18 +1525,26 @@ async def execute_antigravity_task(
     walkthrough_available = bool(latest_walkthrough and os.path.exists(latest_walkthrough))
 
     buttons = []
-    if plan_available:
-        buttons.append([
-            InlineKeyboardButton("🧠 Ver Plan", callback_data="view_plan"),
-            InlineKeyboardButton("▶️ Ejecutar Plan", callback_data="exec_plan"),
-        ])
-
-    action_row = [
-        InlineKeyboardButton("▶️ Continuar Tarea", callback_data="continue_task")
-    ]
-    if walkthrough_available:
-        action_row.append(InlineKeyboardButton("📄 Ver Walkthrough", callback_data="view_walkthrough"))
-    buttons.append(action_row)
+    
+    if code != 0:
+        # SOLO SI HUBO ERROR O TIMEOUT: Mostrar botón para continuar
+        action_row = [
+            InlineKeyboardButton("▶️ Continuar Tarea", callback_data="continue_task")
+        ]
+        if walkthrough_available:
+            action_row.append(InlineKeyboardButton("📄 Ver Walkthrough", callback_data="view_walkthrough"))
+        buttons.append(action_row)
+    else:
+        # TAREA CONCLUIDA CON ÉXITO: NO mostrar "Continuar Tarea" para evitar confusiones
+        if plan_available:
+            buttons.append([
+                InlineKeyboardButton("🧠 Ver Plan", callback_data="view_plan"),
+                InlineKeyboardButton("▶️ Ejecutar Plan", callback_data="exec_plan"),
+            ])
+        if walkthrough_available:
+            buttons.append([
+                InlineKeyboardButton("📄 Ver Walkthrough", callback_data="view_walkthrough"),
+            ])
 
     if has_git_changes:
         buttons.append([
@@ -1532,24 +1563,27 @@ async def execute_antigravity_task(
 
     reply_markup = InlineKeyboardMarkup(buttons)
 
-    status_icon = "🤖" if code == 0 else "⚠️"
-    status_title = "Respuesta de Antigravity" if code == 0 else "Alerta / Timeout en Antigravity"
+    if code == 0:
+        status_icon = "✅"
+        status_title = "Tarea Concluida con Éxito"
+        conclusion_badge = "\n\n🏁 *Estado:* `Completado con éxito` (Todo listo)."
+    else:
+        status_icon = "⚠️"
+        status_title = "Tarea Interrumpida / Timeout"
+        conclusion_badge = (
+            "\n\n⏸️ *Estado:* `Interrumpido antes de concluir`\n"
+            "👉 Presiona **[ ▶️ Continuar Tarea ]** abajo para reanudar desde este punto sin reiniciar desde cero."
+        )
+
     header = (
         f"{status_icon} *{status_title}* `({total_secs}s | {model_badge} | {mode_icon})`\n"
         f"💬 *Sesión:* `{state.active_session_title or (state.active_session_id[:8] if state.active_session_id else 'activa')}`\n"
         f"──────────────────────────────\n\n"
     )
 
-    if code != 0:
-        output += (
-            "\n\n💡 *¿Deseas continuar?*\n"
-            "Presiona **▶️ Continuar Tarea** abajo para que Antigravity retome exactamente donde quedó "
-            "sin repetir trabajo ni reiniciar desde cero."
-        )
-
-    footer = ""
+    footer = conclusion_badge
     if has_git_changes:
-        footer = f"\n\n📊 *Archivos Modificados en Git:*\n`{git_stat}`"
+        footer += f"\n\n📊 *Archivos Modificados en Git:*\n`{git_stat}`"
 
     full_reply = f"{header}{output}{footer}"
 
@@ -1648,6 +1682,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text += "\n"
 
     help_text += "💬 *GESTIÓN DE SESIONES (CHATS)*\n"
+    help_text += "• `/stop` o `/cancel` - *Detener inmediatamente* cualquier tarea en ejecución\n"
     if session_active:
         help_text += "• `/continue` o `/continuar` - *Retomar tarea activa* sin reiniciar de cero\n"
         help_text += "• `/exit_session` o `/leave` - *Salir de la sesión actual* (modo limpio)\n"
@@ -1791,18 +1826,13 @@ async def load_and_present_session(update_or_query: Any, target_sid: str):
 
     # Botones disponibles
     keyboard = []
-    first_row = []
     if has_plan:
-        first_row.append(InlineKeyboardButton("🧠 Ver Plan", callback_data="view_plan"))
-        first_row.append(InlineKeyboardButton("▶️ Ejecutar Plan", callback_data="exec_plan"))
-    else:
-        first_row.append(InlineKeyboardButton("▶️ Continuar Tarea", callback_data="continue_task"))
-    if first_row:
-        keyboard.append(first_row)
+        keyboard.append([
+            InlineKeyboardButton("🧠 Ver Plan", callback_data="view_plan"),
+            InlineKeyboardButton("▶️ Ejecutar Plan", callback_data="exec_plan"),
+        ])
 
     second_row = []
-    if has_plan:
-        second_row.append(InlineKeyboardButton("▶️ Continuar Tarea", callback_data="continue_task"))
     if has_walkthrough:
         second_row.append(InlineKeyboardButton("📄 Ver Walkthrough", callback_data="view_walkthrough"))
     second_row.append(InlineKeyboardButton("🔍 Ver Diff", callback_data="view_diff"))
@@ -2390,6 +2420,21 @@ async def cmd_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prompt += f"\n\nInstrucciones adicionales del usuario:\n{extra_instructions}"
 
     await execute_antigravity_task(update, context, prompt)
+
+async def cmd_stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Detiene cualquier tarea de Antigravity que esté corriendo en ese momento."""
+    if not is_authorized(update):
+        return
+
+    global TASK_CANCEL_REQUESTED, CURRENT_TASK_PROC
+    msg_target = update.effective_message
+    if CURRENT_TASK_PROC and hasattr(CURRENT_TASK_PROC, "pid") and CURRENT_TASK_PROC.pid:
+        TASK_CANCEL_REQUESTED = True
+        kill_process_tree(CURRENT_TASK_PROC.pid)
+        await safe_reply_message(msg_target, "🛑 *Tarea detenida de inmediato.* El proceso fue cancelado.")
+    else:
+        run_cmd("taskkill /F /IM agy.exe /T")
+        await safe_reply_message(msg_target, "ℹ️ No había ninguna tarea activa en ejecución (se verificó y limpió cualquier proceso residual).")
 
 async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
@@ -3277,6 +3322,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "view_walkthrough":
             await cmd_walkthrough(update, context)
 
+        elif data == "stop_current_task":
+            global TASK_CANCEL_REQUESTED, CURRENT_TASK_PROC
+            TASK_CANCEL_REQUESTED = True
+            if CURRENT_TASK_PROC and hasattr(CURRENT_TASK_PROC, "pid") and CURRENT_TASK_PROC.pid:
+                kill_process_tree(CURRENT_TASK_PROC.pid)
+            await safe_edit_message(query, "🛑 *Cancelando tarea...*\nSe ha enviado la orden de detención inmediata.")
+
         elif data == "continue_task":
             if not state.active_session_id:
                 await safe_edit_message(query, "⚠️ No hay una sesión activa para continuar. Selecciona una con `/sessions`.")
@@ -3427,6 +3479,10 @@ def main():
     app.add_handler(CommandHandler("new", cmd_new_session))
     app.add_handler(CommandHandler("continue", cmd_continue))
     app.add_handler(CommandHandler("continuar", cmd_continue))
+    app.add_handler(CommandHandler("stop", cmd_stop))
+    app.add_handler(CommandHandler("cancel", cmd_stop))
+    app.add_handler(CommandHandler("detener", cmd_stop))
+    app.add_handler(CommandHandler("cancelar", cmd_stop))
 
     # Cerebro, Modos y Artefactos
     app.add_handler(CommandHandler("plan", cmd_plan))

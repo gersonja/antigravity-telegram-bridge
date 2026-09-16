@@ -32,6 +32,12 @@ Licencia: MIT (Copyright (c) 2026 Gerson Javier Castellanos Niño)
 import os
 import re
 import sys
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 import glob
 import json
 import time
@@ -513,25 +519,234 @@ def sync_ide_sessions(limit: int = 20):
 
         conn.commit()
         conn.close()
+
+        # Sincronizar bidireccionalmente las sesiones recientes de CLI hacia el IDE
+        try:
+            cli_sessions = []
+            if os.path.exists(CLI_CONV_DIR):
+                for entry in os.scandir(CLI_CONV_DIR):
+                    if entry.name.endswith(".db"):
+                        cli_sessions.append((entry.stat().st_mtime, entry.name.replace(".db", "")))
+            cli_sessions.sort(key=lambda x: x[0], reverse=True)
+            for _, cli_cid in cli_sessions[:10]:
+                sync_cli_to_ide(cli_cid)
+        except Exception as e_cli_sync:
+            print(f"[Sync CLI to IDE Batch Error] {e_cli_sync}")
+
     except Exception as e:
         print(f"[Sync] Error en base de datos: {e}")
 
-def sync_cli_to_ide(session_id: str):
-    """Sincroniza la conversación y artefactos del cerebro desde el CLI hacia el IDE."""
+def _encode_varint(val: int) -> bytes:
+    res = bytearray()
+    while val > 0x7f:
+        res.append((val & 0x7f) | 0x80)
+        val >>= 7
+    res.append(val & 0x7f)
+    return bytes(res)
+
+def _read_varint(buf: bytes, offset: int) -> Tuple[int, int]:
+    res = 0
+    shift = 0
+    while True:
+        b = buf[offset]
+        offset += 1
+        res |= (b & 0x7f) << shift
+        if (b & 0x80) == 0:
+            break
+        shift += 7
+    return res, offset
+
+def _encode_field(fnum: int, wire_type: int, data: Any) -> bytes:
+    tag = _encode_varint((fnum << 3) | wire_type)
+    if wire_type == 0:
+        return tag + _encode_varint(data)
+    elif wire_type == 2:
+        return tag + _encode_varint(len(data)) + data
+    else:
+        return tag + data
+
+def _parse_fields(buf: bytes) -> List[Tuple[int, int, Any]]:
+    pos = 0
+    fields = []
+    while pos < len(buf):
+        tag, pos = _read_varint(buf, pos)
+        fnum = tag >> 3
+        wire = tag & 0x7
+        if wire == 0:
+            val, pos = _read_varint(buf, pos)
+            fields.append((fnum, wire, val))
+        elif wire == 2:
+            length, pos = _read_varint(buf, pos)
+            val = buf[pos:pos+length]
+            pos += length
+            fields.append((fnum, wire, val))
+        elif wire == 5:
+            val = buf[pos:pos+4]
+            pos += 4
+            fields.append((fnum, wire, val))
+        elif wire == 1:
+            val = buf[pos:pos+8]
+            pos += 8
+            fields.append((fnum, wire, val))
+        else:
+            break
+    return fields
+
+def register_session_in_ide_ui(session_id: str, title: str, workspace_path: str) -> bool:
+    """
+    Registra una sesión en antigravityUnifiedStateSync.trajectorySummaries dentro de state.vscdb
+    para que aparezca de forma nativa e inmediata en el panel de chats del Antigravity IDE.
+    """
+    try:
+        db_path = os.path.expanduser(r"~\AppData\Roaming\Antigravity IDE\User\globalStorage\state.vscdb")
+        if not os.path.exists(db_path):
+            return False
+        conn = sqlite3.connect(db_path, timeout=10)
+        c = conn.cursor()
+        c.execute("SELECT value FROM ItemTable WHERE key = 'antigravityUnifiedStateSync.trajectorySummaries'")
+        row = c.fetchone()
+        if not row:
+            conn.close()
+            return False
+
+        raw = base64.b64decode(row[0])
+        if session_id.encode('ascii') in raw:
+            conn.close()
+            return True
+
+        # Extraer plantilla de una entrada existente para mantener fidelidad de esquema
+        pos = 0
+        template_inner = None
+        while pos < len(raw):
+            tag = raw[pos]
+            pos += 1
+            length, pos = _read_varint(raw, pos)
+            entry = raw[pos:pos+length]
+            pos += length
+            if not template_inner:
+                f2_pos = 38
+                if len(entry) > f2_pos + 4:
+                    try:
+                        _, p2 = _read_varint(entry, f2_pos + 1)
+                        sub_len, p3 = _read_varint(entry, p2 + 1)
+                        b64_val = entry[p3:p3+sub_len]
+                        template_inner = base64.b64decode(b64_val)
+                    except Exception:
+                        pass
+
+        if not template_inner:
+            conn.close()
+            return False
+
+        clean_ws = workspace_path.replace("\\", "/").rstrip("/")
+        if not clean_ws.startswith("/"):
+            clean_ws = "/" + clean_ws
+        ws_uri_plain = f"file://{clean_ws}"
+        drive_match = re.match(r"file:///([a-zA-Z]):", ws_uri_plain)
+        if drive_match:
+            drive_letter = drive_match.group(1)
+            ws_uri_escaped = ws_uri_plain.replace(f"file:///{drive_letter}:", f"file:///{drive_letter}%3A")
+        else:
+            ws_uri_escaped = ws_uri_plain
+
+        fields = _parse_fields(template_inner)
+        new_fields = []
+        now_secs = int(time.time())
+
+        for fnum, wire, val in fields:
+            if fnum == 1:
+                new_fields.append((1, 2, title.encode('utf-8')))
+            elif fnum == 4:
+                new_fields.append((4, 2, session_id.encode('ascii')))
+            elif fnum in (3, 7, 10):
+                ts_bytes = _encode_field(1, 0, now_secs)
+                new_fields.append((fnum, 2, ts_bytes))
+            elif fnum == 9:
+                sub_f = _parse_fields(val)
+                new_sub_f = []
+                for sf_num, sf_wire, sf_val in sub_f:
+                    if sf_num in (1, 2):
+                        new_sub_f.append((sf_num, 2, ws_uri_plain.encode('utf-8')))
+                    else:
+                        new_sub_f.append((sf_num, sf_wire, sf_val))
+                rebuilt_ws = b"".join(_encode_field(fn, wr, vl) for fn, wr, vl in new_sub_f)
+                new_fields.append((9, 2, rebuilt_ws))
+            elif fnum == 7 and wire == 2 and b"file:///" in val:
+                new_fields.append((7, 2, ws_uri_escaped.encode('utf-8')))
+            else:
+                new_fields.append((fnum, wire, val))
+
+        new_inner = b"".join(_encode_field(fn, wr, vl) for fn, wr, vl in new_fields)
+        new_b64_inner = base64.b64encode(new_inner)
+
+        outer_f1 = _encode_field(1, 2, session_id.encode('ascii'))
+        outer_sub = _encode_field(1, 2, new_b64_inner)
+        outer_f2 = _encode_field(2, 2, outer_sub)
+        new_entry = _encode_field(1, 2, outer_f1 + outer_f2)
+
+        new_raw = new_entry + raw
+        new_b64_raw = base64.b64encode(new_raw).decode('ascii')
+
+        c.execute("UPDATE ItemTable SET value = ? WHERE key = 'antigravityUnifiedStateSync.trajectorySummaries'", (new_b64_raw,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"[Register Session in IDE UI Error] {e}")
+        return False
+
+def sync_cli_to_ide(session_id: str, title: Optional[str] = None, project_path: Optional[str] = None):
+    """
+    Sincroniza la conversación y artefactos del cerebro desde el CLI hacia el IDE,
+    actualiza workspace_uris en SQLite y registra la sesión en la UI de Antigravity IDE.
+    """
     if not session_id:
         return
     try:
+        # 1. Copiar base de datos SQLite de la conversación
         cli_db = os.path.join(CLI_CONV_DIR, f"{session_id}.db")
         ide_db = os.path.join(IDE_CONV_DIR, f"{session_id}.db")
         if os.path.exists(cli_db):
             os.makedirs(IDE_CONV_DIR, exist_ok=True)
             shutil.copy2(cli_db, ide_db)
 
+        # 2. Copiar archivos de trabajo del cerebro (transcripts, artefactos)
         cli_brain = os.path.join(CLI_BRAIN_DIR, session_id)
         ide_brain = os.path.join(IDE_BRAIN_DIR, session_id)
         if os.path.exists(cli_brain):
             os.makedirs(ide_brain, exist_ok=True)
             shutil.copytree(cli_brain, ide_brain, dirs_exist_ok=True)
+
+        target_proj = project_path if project_path else state.current_project
+        target_title = title if title else (state.active_session_title or "Sesión Remota Telegram")
+
+        # 3. Actualizar workspace_uris en conversation_summaries.db para filtros precisos
+        if target_proj and os.path.exists(CLI_DB_PATH):
+            try:
+                clean_ws = target_proj.replace("\\", "/").rstrip("/")
+                if not clean_ws.startswith("/"):
+                    clean_ws = "/" + clean_ws
+                ws_uri_plain = f"file://{clean_ws}"
+                drive_match = re.match(r"file:///([a-zA-Z]):", ws_uri_plain)
+                ws_uri_escaped = ws_uri_plain.replace(f"file:///{drive_match.group(1)}:", f"file:///{drive_match.group(1)}%3A") if drive_match else ws_uri_plain
+                ws_json = json.dumps([ws_uri_escaped])
+                proj_tag = os.path.basename(os.path.normpath(target_proj)).lower()
+
+                conn = sqlite3.connect(CLI_DB_PATH, timeout=5)
+                c = conn.cursor()
+                c.execute(
+                    "UPDATE conversation_summaries SET workspace_uris = ?, project_id = ? WHERE conversation_id = ? AND (workspace_uris IS NULL OR workspace_uris = '')",
+                    (ws_json, proj_tag, session_id)
+                )
+                conn.commit()
+                conn.close()
+            except Exception as e_db:
+                print(f"[Sync CLI DB Update Error] {e_db}")
+
+        # 4. Registrar en la UI nativa de Antigravity IDE (trajectorySummaries)
+        if target_proj:
+            register_session_in_ide_ui(session_id, target_title, target_proj)
+
     except Exception as e:
         print(f"[Sync CLI->IDE Error] {e}")
 
@@ -974,7 +1189,7 @@ async def execute_antigravity_task(
     # Sincronización bidireccional inmediata hacia el IDE
     final_sid = state.active_session_id or target_session
     if final_sid:
-        sync_cli_to_ide(final_sid)
+        sync_cli_to_ide(final_sid, state.active_session_title, state.current_project)
 
     run_cmd("git add -N .")
     git_code, git_stat = run_cmd("git diff --stat")
@@ -2811,7 +3026,7 @@ def main():
 
     async def post_init_hook(application):
         asyncio.create_task(power_watchdog_task(application))
-        print("⚡ Power Watchdog de batería y red eléctrica iniciado en segundo plano.")
+        print("[Power Watchdog] Monitoreo de bateria y red electrica iniciado en segundo plano.")
 
     app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init_hook).build()
 

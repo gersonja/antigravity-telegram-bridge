@@ -96,9 +96,10 @@ Uno de los mayores avances del sistema es que **el IDE y el Bot de Telegram comp
 
 
 ### B. De Telegram hacia el IDE (`Telegram ➡️ IDE`)
-1. **Sincronización Inmediata (`sync_cli_to_ide`):** Cada respuesta generada desde Telegram actualiza automáticamente el archivo SQLite (`.db`) y el registro (`transcript.jsonl`) en `~/.gemini/antigravity-ide/conversations/`.
-2. **Reflejo en Código:** Todos los archivos creados o modificados por el agente se reflejan al instante en el Explorador del IDE y en el panel de Source Control (Git).
-3. **Reflejo en la ventana de Chat del IDE:** Si deseas ver los mensajes enviados desde Telegram en el panel web de VS Code / Antigravity, basta con cambiar de conversación en el panel o presionar `Ctrl + Shift + P` > `Developer: Reload Window`.
+1. **Sincronización Inmediata (`sync_cli_to_ide`):** Cada respuesta generada desde Telegram actualiza automáticamente el archivo SQLite (`.db`) y el registro (`transcript.jsonl`) en `~/.gemini/antigravity-ide/conversations/` y `~/.gemini/antigravity-ide/brain/`.
+2. **Inyección Nativa en la UI del IDE (`trajectorySummaries`):** Las sesiones nuevas creadas desde el bot se codifican e inyectan automáticamente en el buffer binario Protocol Buffers (`antigravityUnifiedStateSync.trajectorySummaries`) de `state.vscdb`. Gracias a esto, la nueva sesión aparece de inmediato en la barra lateral del IDE vinculada a su respectivo workspace.
+3. **Reflejo en Código:** Todos los archivos creados o modificados por el agente se reflejan al instante en el Explorador del IDE y en el panel de Source Control (Git).
+4. **Continuidad Fluida:** Al hacer clic en cualquier sesión desde el panel de chats del IDE, carga todo el historial y contexto exactamente donde lo dejaste en Telegram.
 
 ---
 

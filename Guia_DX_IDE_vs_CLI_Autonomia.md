@@ -140,14 +140,89 @@ Si observas en la telemetría en vivo de Telegram que el contador pasa de 150 se
 
 ---
 
-## 6. Resumen de Buenas Prácticas para Usuarios de este Repositorio
+## 6. La Realidad de las Sesiones: ¿Por qué Telegram ve todo pero el IDE solo ve sus chats locales?
 
-1. **Entiende el valor de los 1000 segundos:** Cuando `agy` tarda 15 minutos en el bot, no está "congelado"; está haciendo el trabajo pesado que un desarrollador humano haría en media hora de investigación, refactorización y depuración.
+Una de las dudas más frecuentes de los desarrolladores es:  
+> *"¿Por qué desde Telegram puedo ver y continuar los chats que inicié en el IDE, pero en la barra lateral del IDE no aparecen los chats que creé desde Telegram?"*
+
+### La Explicación Técnica: Caché en RAM vs. Almacenamiento en Disco
+
+```mermaid
+flowchart TD
+    subgraph TELEGRAM ["📱 Telegram (Super-Agregador Multi-Capa)"]
+        T[Bot Telegram] -->|Lee ambos mundos| DB1[conversations/*.db]
+        T -->|Lee títulos de UI| DB2[state.vscdb de VS Code]
+        T -->|Resultado| ALL[Ve el 100% de las sesiones: IDE + agy]
+    end
+
+    subgraph IDE_UI ["💻 Antigravity IDE (Ventana Gráfica Electron)"]
+        IDE[Barra Lateral de Chats] -->|Solo lee su caché interno en RAM| DB2
+        IDE -.->|No refresca el disco en caliente| DB1
+        IDE -->|Resultado| ONLY[Solo muestra sesiones nacidas en la GUI]
+    end
+```
+
+1. **La Base de Datos Privada de la GUI (`state.vscdb`):**  
+   El Antigravity IDE es una aplicación de escritorio basada en VS Code (Electron). La lista de chats que ves en su barra lateral izquierda no se lee directamente del disco en cada segundo; se carga al iniciar en la memoria RAM del proceso gráfico a partir de una base de datos interna (`state.vscdb`), codificada en un buffer binario comprimido con Protocol Buffers.
+2. **`agy` escribe en disco, no en la RAM del IDE:**  
+   Cuando `agy` corre desatendido en segundo plano convocado por Telegram, escribe sus historiales (`conversations/*.db`) y su cerebro (`transcript.jsonl`) directamente en el disco duro. La ventana abierta de VS Code no se entera de estos archivos nuevos porque no tiene un vigilante de recarga en caliente para su barra lateral.
+3. **La sesión del IDE exige "Contexto Visual":**  
+   Una sesión gráfica de IDE guarda la pestaña activa, la línea y columna exacta del cursor y los bloques de diff interactivos dibujados en el editor. Una sesión creada en Telegram es pura consola headless: no posee coordenadas de cursor ni pestañas visuales de VS Code asociadas.
+4. **Por qué Telegram sí ve ambos mundos:**  
+   El bot actúa como un **super-agregador universal**: tiene un motor de resolución en 4 capas que inspecciona `conversation_summaries.db`, las bases de datos de `conversations/`, el `transcript.jsonl` y `state.vscdb`. Cruza ambas fuentes y te presenta la lista completa y unificada.
+
+> [!TIP]
+> **El Truco Pro de Continuidad Bidireccional:**  
+> Si quieres que una conversación exista en ambos lados (en la barra lateral de tu laptop y en tu celular):  
+> 1. Abre el IDE en tu casa y envía el primer mensaje corto para inaugurar el hilo (*ej. "Iniciando módulo de reportes"*).  
+> 2. Cierra la laptop y sal a la calle.  
+> 3. Abre Telegram, ejecuta `/sessions`, toca esa sesión y continúa programando. ¡Todo el trabajo quedará registrado en el hilo oficial del IDE y reflejado en el código!
+
+---
+
+## 7. Los 6 Superpoderes Exclusivos del Bot Móvil frente al IDE
+
+Aunque el IDE visual es insustituible para programar sentado frente a la pantalla con diffs interactivos, el Bot de Telegram ofrece **ventajas arquitectónicas y operativas que el IDE simplemente no puede igualar**:
+
+### 1. Desacoplamiento de la Ansiedad de Desarrollo (*Async Mindset*)
+* **En el IDE:** Te sientas a mirar el cursor parpadeante de la IA. Si la tarea tarda 2 minutos, te impacientes, abres redes sociales o pierdes el foco (*context switching*).
+* **En Telegram:** La programación se vuelve **completamente asíncrona**. Envías la orden, guardas el teléfono en el bolsillo y sigues con tu vida (caminando, comprando un café o viajando). Cuando el teléfono vibra con la notificación `✅ Tarea Concluida`, abres el resumen y revisas el diff.
+
+### 2. Ahorro Masivo de Batería y Refrigeración de la Laptop
+* **En el IDE:** Pantalla encendida al 100%, renderizado acelerado por GPU de Electron, ventiladores al máximo. Una laptop con batería se agota en 1.5 a 2 horas.
+* **En el Bot:** La laptop opera con **la tapa cerrada y la pantalla apagada**. El consumo energético cae en más de un 60%, los ventiladores apenas giran y un equipo modesto (incluso con 8 GB de RAM) puede procesar compilaciones pesadas durante horas sin sobrecalentarse.
+
+### 3. Multimodalidad Móvil Inmediata (Cero Fricción con Fotos)
+* **En el IDE:** Para mostrarle a la IA un bug visual que viste en tu teléfono, tienes que tomar la captura, enviártela por correo o WhatsApp Web, descargarla a la carpeta del proyecto y arrastrarla a VS Code.
+* **En Telegram:** Ves el bug en tu teléfono $\rightarrow$ tomas la captura de pantalla $\rightarrow$ la compartes directamente al bot con el texto *"Arregla la alineación de este botón"* $\rightarrow$ `agy` descarga la imagen, la procesa con la visión de Gemini y modifica el CSS en tu laptop. ¡Fricción cero!
+
+### 4. Conmutación Multi-Proyecto Ultraliviana (Sin Consumo de RAM)
+* **En el IDE:** Si tienes 5 proyectos de clientes, abrir 5 ventanas de VS Code consume entre **6 y 12 GB de memoria RAM**, saturando cualquier equipo de 8 GB o 16 GB.
+* **En Telegram:** Usas `/projects` y cambias de repositorio en **0.1 segundos** sin abrir ventanas de escritorio, consumiendo únicamente los mismos ~40 MB de RAM del servicio en segundo plano.
+
+### 5. Flujo DevOps Completo en el Bolsillo (Plan $\rightarrow$ Diff $\rightarrow$ Push $\rightarrow$ Deploy)
+Desde el celular tienes el control de todo el ciclo de entrega de software:
+1. `/plan <tarea>` $\rightarrow$ Diseña la arquitectura.
+2. `[ ▶️ Ejecutar Plan ]` $\rightarrow$ Construye y repara el código.
+3. `[ 🔍 Ver Diff ]` $\rightarrow$ Inspeccionas las líneas exactas tocadas.
+4. `[ ✅ Commit ]` $\rightarrow$ La IA redacta el mensaje convencional y hace push a GitHub.
+5. `[ 👁️ Vigilar Fin de Deploy ]` $\rightarrow$ El bot vigila GitHub Actions y te avisa cuando tu web en producción esté 100% desplegada.
+
+### 6. Guardián Físico del Equipo y la Oficina
+El bot incluye telemetría Win32 (`/battery` y Watchdog de Energía). Si hay un corte de luz en tu casa o alguien tropieza con el cable del cargador de la laptop mientras estás fuera, el bot te envía una alerta de emergencia a Telegram al instante con el porcentaje y autonomía restante.
+
+---
+
+## 8. Resumen de Buenas Prácticas para Usuarios de este Repositorio
+
+1. **Entiende el valor de los 1000 segundos:** Cuando `agy` tarda 15 minutos en el bot, no está "congelado"; está haciendo el trabajo pesado que un desarrollador humano haría en media hora de investigación, refactorización y depuración autónoma.
 2. **Confía en el Idle Watchdog:** El sistema cuenta con un vigilante de inactividad de 600 segundos por paso (`STEP_IDLE_TIMEOUT`). Si el agente sigue cambiando de paso, déjalo trabajar; está resolviendo la misión.
 3. **Usa el planificador como filtro:** Usa `/plan` para pensar y diseñar; usa `/mode accept-edits` para construir.
-4. **Protege tu proyecto con reglas:** No hardcodees restricciones en el bot de Telegram; colócalas en las reglas de tu propio repositorio (`.ai/rules/constitution.md`) para que apliquen tanto en el bot como en el IDE.
+4. **Acota tus requerimientos:** Aplica los principios de la [Guía de Prompting Acotado](Guia_Prompts_Acotados_Agentes_Autonomos.md) para concentrar la potencia de `agy` en segundos.
+5. **Protege tu proyecto con reglas:** No hardcodees restricciones en el bot de Telegram; colócalas en las reglas de tu propio repositorio (`.ai/rules/constitution.md`) para que apliquen tanto en el bot como en el IDE.
 
 ---
 
 *Documento desarrollado como parte de la infraestructura de ingeniería de **Antigravity Telegram Mobile Bridge**.*  
 *Copyright (c) 2026 Gerson Javier Castellanos Niño. Licencia MIT.*
+

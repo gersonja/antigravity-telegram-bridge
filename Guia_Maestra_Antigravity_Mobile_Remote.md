@@ -137,7 +137,9 @@ Para gobernar esta autonomía sin recortar su inteligencia:
 
 > 📘 **Lecturas recomendadas:**  
 > - 👉 [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md)  
-> - 👉 [Guía Maestra de Prompting Acotado para Agentes Autónomos (`agy`)](Guia_Prompts_Acotados_Agentes_Autonomos.md)
+> - 👉 [Guía Maestra de Prompting Acotado para Agentes Autónomos (`agy`)](Guia_Prompts_Acotados_Agentes_Autonomos.md)  
+> - 👉 [Guía de Gobernanza, Reglas de Proyecto y Blindaje de Código (`constitution.md`)](Guia_Gobernanza_Reglas_y_Blindaje.md)  
+> - 👉 [Guía de Resolución de Problemas, Diagnóstico y Rescate Operativo](Guia_Resolucion_Problemas_y_Diagnostico.md)  
 
 ---
 
@@ -295,7 +297,9 @@ antigravity-telegram-bridge/
 ├── README.md                           # Documentación principal para usuarios y desarrolladores
 ├── Guia_Maestra_Antigravity_Mobile_Remote.md # Manual técnico integral de arquitectura
 ├── Guia_DX_IDE_vs_CLI_Autonomia.md     # Guía técnica de DX, tiempos y gobernanza de autonomía
-└── Guia_Prompts_Acotados_Agentes_Autonomos.md # Manual práctico de prompting acotado y directivas
+├── Guia_Prompts_Acotados_Agentes_Autonomos.md # Manual práctico de prompting acotado y directivas
+├── Guia_Gobernanza_Reglas_y_Blindaje.md # Guía de blindaje, constitution.md e invariantes
+└── Guia_Resolucion_Problemas_y_Diagnostico.md # Manual de resolución de incidencias y auditoría
 ```
 
 ---

@@ -1,0 +1,127 @@
+# Guía de Gobernanza, Reglas de Proyecto y Blindaje de Código (`constitution.md`)
+
+> **Cómo configurar las directrices de seguridad, reglas de repositorio (`.ai/rules/`) e invariantes arquitectónicos para blindar tus proyectos cuando Antigravity opera de forma 100% autónoma y desatendida.**
+
+---
+
+## 1. ¿Por qué es Vital la Gobernanza en Agentes Autónomos?
+
+Cuando operas Antigravity desde el IDE de escritorio, tu supervisión visual actúa como un "freno de mano natural": si el modelo intenta modificar un archivo de producción o correr una migración destructiva, tú lo ves y lo rechazas.
+
+Sin embargo, cuando `agy` corre desatendido mediante **Antigravity Telegram Mobile Bridge**, se ejecuta con:
+`--dangerously-skip-permissions`
+
+Esto significa que **el agente tiene permisos totales de ejecución**: puede crear archivos, borrarlos, correr comandos en la consola de Windows y hacer peticiones de red.
+
+Para que puedas dormir tranquilo o caminar por la calle mientras el agente trabaja en tu computadora, la seguridad no se basa en "cortarle las manos", sino en **instalarle una constitución ética y operativa inquebrantable**.
+
+```mermaid
+flowchart TD
+    User([📱 Teléfono / Telegram]) -->|Prompt en Movilidad| Bot[🤖 Antigravity Bridge]
+    Bot -->|Invoca agy en el proyecto activo| AGY[🧠 agy CLI Headless]
+    
+    subgraph RepoRules ["🛡️ Blindaje Local del Repositorio (.ai/rules/)"]
+        Const[📜 constitution.md\nInvariantes Inquebrantables]
+        Agents[📜 AGENTS.md / GEMINI.md\nLímites Operativos]
+    end
+    
+    AGY -->|1. Lee obligatoriamente las reglas| RepoRules
+    AGY -->|2. Aplica restricciones antes de tocar código| Code[💻 Código y Terminal Seguros]
+```
+
+---
+
+## 2. Cómo Lee Antigravity las Reglas de tu Repositorio
+
+Antigravity tiene incorporado en su núcleo el **sistema de descubrimiento de contexto local**. Antes de interpretar cualquier mensaje que le envíes desde Telegram:
+
+1. El puente ejecuta `agy` estableciendo el directorio de trabajo (`cwd`) en la raíz del proyecto que seleccionaste con `/projects`.
+2. Antigravity inspecciona automáticamente los siguientes archivos en la raíz del repositorio:
+   * `.ai/rules/*.md` o `.agents/rules/*.md`
+   * `constitution.md` (o dentro de `.ai/rules/constitution.md`)
+   * `GEMINI.md` o `AGENTS.md`
+3. Todas las directrices encontradas se inyectan en el prompt de sistema del modelo con **prioridad superior al prompt del usuario**.
+4. Si tu prompt móvil le pide algo ambiguo (*"prueba si emite la factura"*), pero la constitución dice *"PROHIBIDO emitir hacia servidores externos"*, **la constitución siempre gana**.
+
+---
+
+## 3. Plantilla Maestra: `constitution.md` para Repositorios Conectados
+
+Copia y pega este archivo en tu proyecto en la ruta:  
+📁 `.ai/rules/constitution.md` (o `constitution.md` en la raíz).
+
+```markdown
+# Constitución y Reglas Invariables del Repositorio
+
+Este documento define las directrices y fronteras operativas no negociables para cualquier agente de Inteligencia Artificial (Antigravity CLI / IDE / Cascade) que opere en este código.
+
+## 1. INVARIANTE: Entorno de Ejecución y Servidores Locales
+- PROHIBIDO terminantemente intentar levantar servidores en segundo plano (`localhost`, `npm start`, `npm run dev`, `docker compose up`, `mvn spring-boot:run`, etc.).
+- Las pruebas y compilaciones deben realizarse en servidores de pruebas dedicados o mediante mocks en memoria, jamás abriendo puertos locales en la máquina anfitriona.
+- No intentes verificar endpoints HTTP levantando servicios locales. Si necesitas probar lógica de negocio, utiliza pruebas unitarias aisladas.
+
+## 2. INVARIANTE: Protección de Integraciones Externas y Producción
+- PROHIBIDO realizar llamadas de red, emitir transacciones o enviar payloads a entidades gubernamentales, tributarias (ej. SRI, SUNAT, DIAN) o pasarelas de pago (Stripe, PayPal, etc.).
+- Cualquier interacción con APIs de terceros debe implementarse con adaptadores simulados (Mocks / Stubs / Fixtures).
+- Si un requerimiento solicita "probar emisión", la prueba debe limitarse a validar la estructura del XML/JSON y la firma criptográfica sin transmisión telemática real.
+
+## 3. INVARIANTE: Bases de Datos y Migraciones Seguras
+- PROHIBIDO ejecutar comandos destructivos de base de datos (`prisma migrate reset`, `drop schema`, `drop table`, `truncate`, `rm -rf data/`).
+- Las migraciones deben ser estrictamente aditivas y hacia adelante (forward-only).
+- Nunca ejecutes scripts SQL directamente contra bases de datos de producción desde el CLI sin confirmación expresa y plan aprobado.
+
+## 4. INVARIANTE: Gestión de Secretos y Credenciales
+- PROHIBIDO imprimir en los logs o respuestas el contenido de archivos `.env`, llaves privadas (`.p12`, `.pem`), secretos JWT o contraseñas de bases de datos.
+- Si necesitas usar una variable de entorno nueva, documenta su nombre en `.env.example` con un valor ficticio. Jamás la expongas en commits.
+
+## 5. INVARIANTE: Fronteras de Archivos y Dependencias
+- Limítate a modificar exclusivamente los archivos relacionados con el objetivo solicitado.
+- No realices refactorizaciones no solicitadas en archivos adyacentes ("si no está roto, no lo toques").
+- No instales dependencias pesadas de `npm` o `pip` sin justificación técnica imprescindible. Prefiere utilidades nativas del lenguaje.
+```
+
+---
+
+## 4. Los 5 Errores Fatales que Previene este Blindaje
+
+A continuación se detallan desastres reales ocurridos en desarrollo autónomo que quedan **100% neutralizados** con esta configuración:
+
+| Peligro Sin Blindaje | Cómo Actúa el Agente | Protección del Invariante |
+| :--- | :--- | :--- |
+| **El Fantasma de Localhost** | El agente ejecuta `npm run dev` en segundo plano para "verificar su cambio". El proceso queda colgado consumiendo 1.5 GB de RAM y bloqueando el puerto 3000. | **Invariante 1:** El agente tiene prohibido levantar servidores locales; usa mocks o concluye tras editar. |
+| **Facturación o Cobros Reales** | Pides arreglar el módulo de cobros. El agente ejecuta el script de prueba y hace un cargo real de $50 o emite un comprobante legal con un RUC real. | **Invariante 2:** El agente no puede emitir peticiones a pasarelas reales bajo ninguna circunstancia. |
+| **Destrucción de la BD Local** | La migración da un conflicto. El agente "útil" ejecuta `prisma migrate reset` borrando todas las tablas y datos de prueba locales. | **Invariante 3:** Comandos destructivos vetados en la constitución. |
+| **Filtración de Llaves Privadas** | El agente pega el contenido de un `.env` o una clave `.p12` en el chat de Telegram o en el mensaje del commit de Git. | **Invariante 4:** Cláusula de confidencialidad estricta para secretos. |
+| **Sobre-Refactorización Innecesaria** | Pides arreglar un botón y el agente decide "modernizar" 35 archivos de componentes que nadie le pidió tocar. | **Invariante 5:** Fronteras de archivo cerradas y respeto al código legado. |
+
+---
+
+## 5. Separación Arquitectónica: Reglas del Bot vs. Reglas de Negocio
+
+Un principio fundamental de diseño de este proyecto es su **neutralidad**:
+
+* **El Repositorio del Bot (`antigravity-telegram-bridge`):**  
+  Es un orquestador universal de infraestructura y telecomunicaciones. Contiene únicamente directrices sobre cómo gestionar procesos en Windows, manejar cortes de luz, sincronizar SQLite y enviar mensajes a Telegram. **No sabe ni debe saber qué hace tu aplicación.**
+* **Tus Proyectos de Trabajo (`MiApp`, `SistemaMedico`, `FacturacionWeb`):**  
+  Cada uno de tus proyectos debe contener su propio archivo `.ai/rules/constitution.md`.
+  * Si estás en `FacturacionWeb`, sus reglas prohibirán emisiones al fisco.
+  * Si estás en `SistemaMedico`, sus reglas prohibirán tocar historias clínicas reales.
+  * Si estás en una app móvil, sus reglas prohibirán compilar en emuladores pesados.
+
+Al cambiar de proyecto en Telegram con `/projects`, **`agy` adopta instantáneamente la constitución del nuevo proyecto sin mezclar directrices**.
+
+---
+
+## 6. Verificación: ¿Cómo Saber si `agy` está Respetando las Reglas?
+
+Cuando envíes una orden desde Telegram, puedes verificar fácilmente si el agente leyó la constitución:
+
+1. **En la telemetría en vivo:** Verás entre los primeros 5 pasos:  
+   `🔍 Inspeccionando: .ai/rules/constitution.md` o `Reading rule files...`.
+2. **En las respuestas:** Si le pides algo que viola una regla, `agy` te responderá respetuosamente:
+   > *"He actualizado el código del XML de la factura, pero de acuerdo con el Invariante 2 de la constitución de este proyecto, no he realizado llamadas de red al SRI. He añadido un mock unitario para validar la estructura."*
+
+---
+
+*Documento desarrollado como parte de la infraestructura de ingeniería de **Antigravity Telegram Mobile Bridge**.*  
+*Copyright (c) 2026 Gerson Javier Castellanos Niño. Licencia MIT.*

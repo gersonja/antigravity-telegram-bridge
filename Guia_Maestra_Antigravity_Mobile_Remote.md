@@ -132,9 +132,12 @@ Para evitar que el bot se quede congelado esperando respuestas `[y/N]` en una te
 Para gobernar esta autonomía sin recortar su inteligencia:
 1. **Reglas de Constitución:** Define prohibiciones estrictas en el `.ai/rules/constitution.md` de tu proyecto (ej. prohibido emitir comprobantes a producción o levantar localhost).
 2. **Modo Planificación (`/mode plan` o `/plan`):** Para tareas de gran envergadura, obliga al agente a diseñar la arquitectura y detenerse antes de escribir código.
-3. **Cancelación Inmediata:** Si ves que el agente se desvía, utiliza el botón `[ 🛑 Detener Tarea ]` o envía `/stop`.
+3. **Prompting Acotado (*Scope-Bounded Prompting*):** Estructura tus requerimientos móviles con objetivos claros, delimitación de archivos y directivas negativas explícitas (ej. *"No intentes compilar ni levantar servidores locales"*), reduciendo misiones de 1000s a menos de 90s.
+4. **Cancelación Inmediata:** Si ves que el agente se desvía, utiliza el botón `[ 🛑 Detener Tarea ]` o envía `/stop`.
 
-> 📘 **Lectura recomendada:** Para un análisis técnico exhaustivo sobre este paradigma, consulta la [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md).
+> 📘 **Lecturas recomendadas:**  
+> - 👉 [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md)  
+> - 👉 [Guía Maestra de Prompting Acotado para Agentes Autónomos (`agy`)](Guia_Prompts_Acotados_Agentes_Autonomos.md)
 
 ---
 
@@ -291,7 +294,8 @@ antigravity-telegram-bridge/
 ├── LICENSE                             # Licencia de código abierto MIT
 ├── README.md                           # Documentación principal para usuarios y desarrolladores
 ├── Guia_Maestra_Antigravity_Mobile_Remote.md # Manual técnico integral de arquitectura
-└── Guia_DX_IDE_vs_CLI_Autonomia.md     # Guía técnica de DX, tiempos y gobernanza de autonomía
+├── Guia_DX_IDE_vs_CLI_Autonomia.md     # Guía técnica de DX, tiempos y gobernanza de autonomía
+└── Guia_Prompts_Acotados_Agentes_Autonomos.md # Manual práctico de prompting acotado y directivas
 ```
 
 ---

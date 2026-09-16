@@ -197,8 +197,9 @@ pwsh -File install_bot_service.ps1
 * **Antigravity IDE (Copiloto Interactivo):** Opera mediante micro-turnos reactivos (1 a 4 llamadas a herramientas) anclados a la pestaña y cursor del editor, pausando obligatoriamente en cada cambio para que el desarrollador humano apruebe los diffs.
 * **Telegram Bridge (`agy` CLI Autónomo):** Invocado con `--dangerously-skip-permissions` para posibilitar la movilidad remota desatendida desde el móvil. Opera por **misiones completas por lote** (*Goal-Driven*). Si el agente detecta un fallo o una prueba fallida, entra en un bucle recursivo de auto-corrección (*Self-Healing Loop*), modificando archivos, buscando dependencias y probando hasta certificar la tarea completa. Una sola interacción en Telegram equivale a 20 o 30 micro-turnos interactivos del IDE ejecutados sin intervención humana mientras viajas o caminas.
 
-> 📘 **Consulta la guía de arquitectura y buenas prácticas:**  
-> 👉 [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md)
+> 📚 **Guías de Arquitectura y Buenas Prácticas:**  
+> - 📘 [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md)  
+> - 🎯 [Guía Maestra de Prompting Acotado para Agentes Autónomos (`agy`)](Guia_Prompts_Acotados_Agentes_Autonomos.md) *(Aprende la anatomía de los 4 pilares y el cheat-sheet de directivas negativas para reducir tareas de 1000s a 90s)*
 
 ---
 

@@ -122,13 +122,16 @@ Para tareas de gran envergadura o arquitecturas sensibles donde no quieres que l
 4. Lo revisas tranquilamente desde el móvil y, solo cuando estés de acuerdo con su enfoque, pulsas **`[ ▶️ Ejecutar Plan ]`**.
 
 ### 3. Delimitación de Fronteras en el Prompt Móvil (*Scope-Bounded Prompting*)
-Al redactar una orden en Telegram, aprovecha la gran comprensión del modelo para fijar sus límites operacionales:
+Al redactar una orden en Telegram, aprovecha la gran comprensión del modelo para fijar sus límites operacionales mediante directivas negativas explícitas:
 * 🔴 **Prompt Desbordante:**  
   *"Haz que funcione el módulo de firmas electrónicas."*  
   *(Resultado: `agy` intentará compilar todo el sistema, buscar dependencias, probar puertos locales y tardará más de 1000 segundos).*
 * 🟢 **Prompt Conducido y Eficiente:**  
   *"Revisa los archivos del servicio de firmas, corrige el tipado de los certificados según la interfaz `ICertificate` y documenta los cambios. **Solo modifica esos archivos, no intentes compilar ni ejecutar pruebas locales.**"*  
   *(Resultado: `agy` se concentrará de forma quirúrgica, resolviendo la tarea en menos de 2 minutos y con menos de 30 pasos).*
+
+> 📘 **Guía Especializada:** Hemos dedicado un manual completo con la anatomía de los 4 pilares, casos de uso reales y el *cheat-sheet* de directivas negativas:  
+> 👉 [Guía Maestra de Prompting Acotado para Agentes Autónomos (`agy`)](Guia_Prompts_Acotados_Agentes_Autonomos.md)
 
 ### 4. Intervención Táctica en Vivo: Botón `[ 🛑 Detener Tarea ]` y `/stop`
 Si observas en la telemetría en vivo de Telegram que el contador pasa de 150 segundos o 50 pasos y notas que el agente entró en un camino exploratorio innecesario:

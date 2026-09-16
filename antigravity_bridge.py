@@ -133,8 +133,9 @@ WATCHDOG_ENABLED = os.environ.get("ANTIGRAVITY_WATCHDOG_ENABLED", "true").lower(
 WATCHDOG_INTERVAL = int(os.environ.get("ANTIGRAVITY_WATCHDOG_INTERVAL", "45"))
 DEFAULT_HEALTH_URL = os.environ.get("ANTIGRAVITY_DEFAULT_HEALTH_URL", "").strip()
 TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_TASK_TIMEOUT", "300"))
-# Timeout por inactividad entre pasos: si no hay avance en este tiempo, se considera estancada
-STEP_IDLE_TIMEOUT = int(os.environ.get("ANTIGRAVITY_STEP_IDLE_TIMEOUT", "360"))
+# Timeout por inactividad entre pasos: si no hay avance en este tiempo, se considera estancada.
+# 0 = sin timeout por inactividad (deshabilitado). Por defecto: 600s (10 min) para máxima holgura en procesos pesados y reintentos de API.
+STEP_IDLE_TIMEOUT = int(os.environ.get("ANTIGRAVITY_STEP_IDLE_TIMEOUT", "600"))
 # Límite global de seguridad (en segundos). 0 = sin límite global (guiado 100% por actividad de pasos)
 MAX_TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_MAX_TASK_TIMEOUT", "0"))
 
@@ -163,18 +164,22 @@ AVAILABLE_MODES = {
     "plan": "🧠 Planificación (Arquitectura e Implementation Plan)",
 }
 
-def resolve_model(prompt: str, selected_model: str) -> Tuple[str, str]:
+def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) -> Tuple[str, str]:
     """
     Determina el modelo efectivo a utilizar por Antigravity CLI.
-    Si selected_model == 'auto', clasifica semánticamente el prompt:
-      - Consultas, UI, CSS, ajustes puntuales, git, formateo -> gemini-3.8-flash-medium (Ultrarrápido)
-      - Arquitectura, refactorizaciones, migraciones, debugging complejo, planes -> gemini-3.8-flash-high (Profundo)
+    Si selected_model == 'auto', clasifica semánticamente el prompt y el modo:
+      - Modo 'plan', arquitectura, refactorizaciones, migraciones, planes -> gemini-3.8-flash-high (Profundo y robusto)
+      - Consultas simples, UI, CSS, ajustes puntuales -> gemini-3.8-flash-medium (Ultrarrápido)
     Retorna (effective_model_id, badge_for_telegram).
     """
     if selected_model != "auto":
         label = AVAILABLE_MODELS.get(selected_model, selected_model)
         badge = label.split(" ")[1] if " " in label else selected_model
         return selected_model, badge
+
+    # En modo plan, siempre utilizar modelo High para garantizar pensamiento profundo y evitar congestión de API
+    if mode == "plan":
+        return "gemini-3.8-flash-high", "🎯 Auto (⚡ High Plan)"
 
     p_lower = prompt.lower()
     deep_keywords = [
@@ -1030,10 +1035,11 @@ async def send_smart_message(
 # =============================================================================
 # EJECUCIÓN ASÍNCRONA DE ANTIGRAVITY (AGY CLI)
 # =============================================================================
-def get_live_execution_step_and_mtime(session_id: Optional[str], project_dir: Optional[str] = None) -> Tuple[str, float]:
+def get_live_execution_step_and_mtime(session_id: Optional[str], min_timestamp: float = 0.0) -> Tuple[str, float]:
     """
-    Monitorea la actividad en tiempo real del cerebro de Antigravity (steps, tasks, chunks de log, transcript, messages y repo git).
+    Monitorea la actividad en tiempo real del cerebro de Antigravity (steps, tasks, chunks de log, transcript, messages).
     Devuelve la descripción del paso activo o herramienta ejecutándose y el timestamp (mtime) de la actividad más reciente detectada.
+    Solo considera eventos con timestamp >= min_timestamp para evitar falsos positivos de turnos anteriores.
     """
     if not session_id:
         return "Analizando requerimientos...", 0.0
@@ -1058,7 +1064,7 @@ def get_live_execution_step_and_mtime(session_id: Optional[str], project_dir: Op
 
     sys_gen = os.path.join(target_dir, ".system_generated")
     max_activity_mtime = 0.0
-    active_step_label = "Ejecutando código..."
+    active_step_label = "🧠 Conectando y analizando..."
     latest_step_num = None
 
     # 1. Monitoreo de pasos internos individuales (.system_generated/steps/<n>/output.txt)
@@ -1071,7 +1077,7 @@ def get_live_execution_step_and_mtime(session_id: Optional[str], project_dir: Op
                 step_path = os.path.join(steps_dir, str(latest_step_num))
                 out_file = os.path.join(step_path, "output.txt")
                 s_mtime = os.path.getmtime(out_file) if os.path.exists(out_file) else os.path.getmtime(step_path)
-                if s_mtime > max_activity_mtime:
+                if s_mtime >= min_timestamp and s_mtime > max_activity_mtime:
                     max_activity_mtime = s_mtime
                     active_step_label = f"⚡ Paso #{latest_step_num}"
         except Exception:
@@ -1085,7 +1091,7 @@ def get_live_execution_step_and_mtime(session_id: Optional[str], project_dir: Op
                 if f.endswith(".log"):
                     t_path = os.path.join(tasks_dir, f)
                     t_mtime = os.path.getmtime(t_path)
-                    if t_mtime > max_activity_mtime:
+                    if t_mtime >= min_timestamp and t_mtime > max_activity_mtime:
                         max_activity_mtime = t_mtime
                         t_name = f.replace(".log", "")
                         active_step_label = f"⚙️ Tarea `{t_name}` en curso"
@@ -1110,7 +1116,7 @@ def get_live_execution_step_and_mtime(session_id: Optional[str], project_dir: Op
     for log_path in log_candidates:
         try:
             l_mtime = os.path.getmtime(log_path)
-            if l_mtime >= max_activity_mtime:
+            if l_mtime >= min_timestamp and l_mtime >= max_activity_mtime:
                 max_activity_mtime = max(max_activity_mtime, l_mtime)
                 with open(log_path, "rb") as f:
                     f.seek(0, os.SEEK_END)
@@ -1162,31 +1168,16 @@ def get_live_execution_step_and_mtime(session_id: Optional[str], project_dir: Op
                 if f.endswith(".json"):
                     mp = os.path.join(messages_dir, f)
                     mm = os.path.getmtime(mp)
-                    if mm > max_activity_mtime:
+                    if mm >= min_timestamp and mm > max_activity_mtime:
                         max_activity_mtime = mm
         except Exception:
             pass
 
-    # 5. Monitoreo del repositorio Git en el proyecto de trabajo si aplica
-    if project_dir and os.path.isdir(project_dir):
-        git_dir = os.path.join(project_dir, ".git")
-        if os.path.exists(git_dir):
-            for gfile in ["index", "HEAD", "logs/HEAD", "COMMIT_EDITMSG"]:
-                gp = os.path.join(git_dir, gfile)
-                if os.path.exists(gp):
-                    try:
-                        gm = os.path.getmtime(gp)
-                        if gm > max_activity_mtime:
-                            max_activity_mtime = gm
-                            active_step_label = "📦 Actividad Git / Commit..."
-                    except Exception:
-                        pass
-
     return active_step_label, max_activity_mtime
 
-def get_live_execution_step(session_id: Optional[str], project_dir: Optional[str] = None) -> str:
+def get_live_execution_step(session_id: Optional[str], min_timestamp: float = 0.0) -> str:
     """Wrapper de compatibilidad para telemetría en vivo del paso activo."""
-    step, _ = get_live_execution_step_and_mtime(session_id, project_dir)
+    step, _ = get_live_execution_step_and_mtime(session_id, min_timestamp)
     return step
 
 def get_newest_brain_session_id(after_timestamp: float) -> Optional[str]:
@@ -1220,8 +1211,8 @@ async def execute_antigravity_task(
     """Ejecuta el CLI de Antigravity en segundo plano con telemetría en vivo y timeout dinámico por inactividad."""
     chat_id = update.effective_chat.id
     target_session = override_session_id if override_session_id is not None else state.active_session_id
-    effective_model, model_badge = resolve_model(prompt, state.model)
     effective_mode = mode if mode else getattr(state, "execution_mode", "accept-edits")
+    effective_model, model_badge = resolve_model(prompt, state.model, mode=effective_mode)
     mode_icon = "🧠 Plan" if effective_mode == "plan" else "⚡ Directo"
     session_badge = f"`{target_session[:8]}...`" if target_session else "✨ Nueva Sesión"
     proj_name = os.path.basename(os.path.normpath(state.current_project)) if state.current_project else "Sin Proyecto"
@@ -1263,7 +1254,7 @@ async def execute_antigravity_task(
 
     start_time = time.time()
     last_activity_time = start_time
-    last_seen_mtime = 0.0
+    last_seen_mtime = start_time
     last_step = "Iniciando análisis..."
     active_session_tracker = target_session
     code = 0
@@ -1301,10 +1292,10 @@ async def execute_antigravity_task(
                 if detected:
                     active_session_tracker = detected
 
-            # 2. Telemetría de paso y actividad del cerebro / pasos / git
+            # 2. Telemetría de paso y actividad del cerebro / pasos / tareas (filtrado por inicio)
             curr_step, act_mtime = get_live_execution_step_and_mtime(
                 active_session_tracker,
-                project_dir=state.current_project
+                min_timestamp=start_time - 3,
             )
             if curr_step != last_step or (act_mtime and act_mtime > last_seen_mtime):
                 last_activity_time = now
@@ -1315,7 +1306,7 @@ async def execute_antigravity_task(
             idle_elapsed = now - last_activity_time
 
             # 3. Timeout por inactividad de paso individual (reseteado con cada actividad detectada)
-            if idle_elapsed > STEP_IDLE_TIMEOUT:
+            if STEP_IDLE_TIMEOUT > 0 and idle_elapsed > STEP_IDLE_TIMEOUT:
                 kill_process_tree(proc.pid)
                 try:
                     await comm_task
@@ -1343,6 +1334,7 @@ async def execute_antigravity_task(
             elapsed_int = int(total_elapsed)
             idle_int = int(idle_elapsed)
             display_session = f"`{active_session_tracker[:8]}...`" if active_session_tracker else "✨ Nueva Sesión"
+            idle_indicator = f" · _(inactividad: {idle_int}s / {STEP_IDLE_TIMEOUT}s)_" if STEP_IDLE_TIMEOUT > 0 else ""
             try:
                 await status_msg.edit_text(
                     f"🧠 *Antigravity trabajando...*\n"
@@ -1350,7 +1342,7 @@ async def execute_antigravity_task(
                     f"🤖 *Modelo:* `{model_badge}` | ⚙️ *Modo:* `{mode_icon}`\n"
                     f"💬 *Sesión:* {display_session}\n\n"
                     f"⏳ *Paso activo:* {curr_step}\n"
-                    f"⏱️ _{elapsed_int}s transcurridos_ · _(inactividad: {idle_int}s / {STEP_IDLE_TIMEOUT}s)_",
+                    f"⏱️ _{elapsed_int}s transcurridos_{idle_indicator}",
                     parse_mode=constants.ParseMode.MARKDOWN,
                 )
             except Exception:

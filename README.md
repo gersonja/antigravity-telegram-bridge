@@ -190,6 +190,18 @@ pwsh -File install_bot_service.ps1
 
 ---
 
+## 🧠 Paradigma de DX: Antigravity IDE vs. `agy` CLI Autónomo
+
+¿Por qué en el IDE visual una respuesta toma 2 minutos mientras que en el Bot de Telegram una tarea puede tomar **500 a 1000+ segundos** y acumular cientos de pasos?
+
+* **Antigravity IDE (Copiloto Interactivo):** Opera mediante micro-turnos reactivos (1 a 4 llamadas a herramientas) anclados a la pestaña y cursor del editor, pausando obligatoriamente en cada cambio para que el desarrollador humano apruebe los diffs.
+* **Telegram Bridge (`agy` CLI Autónomo):** Invocado con `--dangerously-skip-permissions` para posibilitar la movilidad remota desatendida desde el móvil. Opera por **misiones completas por lote** (*Goal-Driven*). Si el agente detecta un fallo o una prueba fallida, entra en un bucle recursivo de auto-corrección (*Self-Healing Loop*), modificando archivos, buscando dependencias y probando hasta certificar la tarea completa. Una sola interacción en Telegram equivale a 20 o 30 micro-turnos interactivos del IDE ejecutados sin intervención humana mientras viajas o caminas.
+
+> 📘 **Consulta la guía de arquitectura y buenas prácticas:**  
+> 👉 [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md)
+
+---
+
 ## 📖 Catálogo de Comandos
 
 | Comando | Descripción | Teclado Interactivo / Botones |

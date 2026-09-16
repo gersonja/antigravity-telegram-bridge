@@ -117,7 +117,28 @@ Para evitar confusiones operativas entre tareas distintas, el sistema cuenta con
 
 ---
 
-## 6. Catálogo Completo de Comandos y Teclado Táctil
+## 6. Paradigma DX: Antigravity IDE vs. `agy` CLI Autónomo (Tiempos, Autonomía y Gobernanza)
+
+Uno de los aspectos más importantes a comprender en este entorno es la diferencia de dinámica entre el IDE de escritorio y el agente remoto:
+
+### A. La Gran Paradoja del Tiempo (1000s vs 2 minutos)
+* En el **IDE visual**, el modelo es un copiloto de *micro-turnos*: realiza 1 o 2 llamadas a herramientas, muestra el diff y se detiene a esperar tu clic.
+* En el **Bot de Telegram**, `agy` corre desatendido como un *agente de misión por lote*. Al no tener un humano sentado al lado aprobando cada línea, el agente asume la responsabilidad de resolver la meta completa de punta a punta. Si al modificar código algo no compila, el agente no se detiene a quejarse: **entra en su bucle de auto-reparación**, investigando el error, modificando otros archivos y probando hasta dejar la solución operativa. Por ello, acumula 100, 300 o más de 500 pasos y toma entre 500 y 1200 segundos. Una interacción en el bot equivale a 20 o 30 turnos del IDE ejecutados sin supervisión mientras estás en movimiento.
+
+### B. El Factor Permisos y la Proactividad del Agente
+Para evitar que el bot se quede congelado esperando respuestas `[y/N]` en una terminal invisible en Windows, se ejecuta con `--dangerously-skip-permissions`. Esto le otorga al agente libertad de acción para compilar, probar e inspeccionar código de manera fluida.
+
+### C. Gobernanza sin Castrar al Agente
+Para gobernar esta autonomía sin recortar su inteligencia:
+1. **Reglas de Constitución:** Define prohibiciones estrictas en el `.ai/rules/constitution.md` de tu proyecto (ej. prohibido emitir comprobantes a producción o levantar localhost).
+2. **Modo Planificación (`/mode plan` o `/plan`):** Para tareas de gran envergadura, obliga al agente a diseñar la arquitectura y detenerse antes de escribir código.
+3. **Cancelación Inmediata:** Si ves que el agente se desvía, utiliza el botón `[ 🛑 Detener Tarea ]` o envía `/stop`.
+
+> 📘 **Lectura recomendada:** Para un análisis técnico exhaustivo sobre este paradigma, consulta la [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md).
+
+---
+
+## 7. Catálogo Completo de Comandos y Teclado Táctil
 
 El bot está diseñado para operarse al 95% mediante botones en pantalla, minimizando la necesidad de escribir en el teclado móvil:
 
@@ -149,7 +170,7 @@ El bot está diseñado para operarse al 95% mediante botones en pantalla, minimi
 
 ---
 
-## 7. Módulos Avanzados de Automatización y Telemetría
+## 8. Módulos Avanzados de Automatización y Telemetría
 
 ### 🧠 Modos de Ejecución y Atajo de Planificación (`/mode` y `/plan <tarea>`)
 Antigravity soporta dos modos de ejecución:
@@ -197,7 +218,7 @@ El comando y botón de diff cuentan con un motor dual que resuelve el problema d
 
 ---
 
-## 8. Flujo de Trabajo Típico en Movilidad (Paso a Paso)
+## 9. Flujo de Trabajo Típico en Movilidad (Paso a Paso)
 
 ```
 [ En casa antes de salir ]
@@ -221,7 +242,7 @@ El comando y botón de diff cuentan con un motor dual que resuelve el problema d
 
 ---
 
-## 9. Robustez Técnica y Manejo de Errores
+## 10. Robustez Técnica y Manejo de Errores
 
 - **Motor Guiado por Pasos Activos (Zero Timeouts Arbitrarios):**  
   Eliminación de cortes fijos (como el antiguo timeout de 300s). El puente implementa un *Idle Watchdog* (`STEP_IDLE_TIMEOUT = 600s`) que monitorea `transcript.jsonl` y resetea continuamente el contador a cero cada vez que el agente cambia de paso o edita un archivo. Ofrece hasta 10 minutos completos de inactividad por paso para dar máxima holgura a compilaciones pesadas y reintentos de red.
@@ -258,7 +279,7 @@ El comando y botón de diff cuentan con un motor dual que resuelve el problema d
 
 ---
 
-## 10. Estructura de Archivos del Repositorio
+## 11. Estructura de Archivos del Repositorio
 
 ```text
 antigravity-telegram-bridge/
@@ -269,7 +290,8 @@ antigravity-telegram-bridge/
 ├── .gitignore                          # Exclusión de tokens, entornos virtuales y logs
 ├── LICENSE                             # Licencia de código abierto MIT
 ├── README.md                           # Documentación principal para usuarios y desarrolladores
-└── Guia_Maestra_Antigravity_Mobile_Remote.md # Manual técnico integral de arquitectura
+├── Guia_Maestra_Antigravity_Mobile_Remote.md # Manual técnico integral de arquitectura
+└── Guia_DX_IDE_vs_CLI_Autonomia.md     # Guía técnica de DX, tiempos y gobernanza de autonomía
 ```
 
 ---

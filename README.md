@@ -46,7 +46,7 @@ graph TD
 ## ✨ Características Principales
 
 ### 1. 🧠 Integración Completa con Google Antigravity (`agy` & IDE)
-- **Sincronización Bidireccional Total (CLI 🔄 IDE):** Cada orden ejecutada desde Telegram actualiza la base de datos SQLite oficial (`conversation_summaries.db`) y el cerebro del agente (`transcript.jsonl`). Los chats iniciados en el IDE se pueden continuar en Telegram y viceversa.
+- **Sincronización Bidireccional Total (CLI 🔄 IDE):** Ejecución unificada con el perfil nativo del Antigravity IDE (`--app_data_dir antigravity-ide`). Cada orden ejecutada desde Telegram actualiza las bases de datos SQLite oficiales (`conversation_summaries.db`) y el cerebro del agente (`transcript.jsonl`). Los chats iniciados en el IDE se pueden continuar en Telegram y viceversa, con un resolver inteligente de 4 capas que garantiza títulos descriptivos y comprensibles en todo momento.
 - **Auto-Router y Multimodelo:** Selector automático inteligente (`auto`) que clasifica tareas entre Gemini 3.8 Flash Medium (ultrarrápido para UI, CSS, fixes) y Gemini 3.8 Flash High (análisis profundo y arquitectura). También soporta `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, etc.
 - **Modos de Ejecución Flexibles (`/mode`):** Alterna entre **⚡ Directo (`accept-edits`)** para ejecución inmediata y **🧠 Planificación (`plan`)** para diseño previo de arquitectura.
 - **Atajo Rápido de Planificación (`/plan <tarea>`):** Escribe `/plan` seguido de tu objetivo para entrar directamente en modo plan sin cambiar la configuración global. Antigravity investiga, genera el `implementation_plan.md` y te ofrece el botón táctil **[ ▶️ Ejecutar Plan ]** para aplicarlo.

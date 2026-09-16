@@ -144,6 +144,7 @@ CLI_DB_PATH = os.path.expanduser(r"~\.gemini\antigravity-cli\conversation_summar
 CLI_CONV_DIR = os.path.expanduser(r"~\.gemini\antigravity-cli\conversations")
 CLI_BRAIN_DIR = os.path.expanduser(r"~\.gemini\antigravity-cli\brain")
 
+IDE_DB_PATH = os.path.expanduser(r"~\.gemini\antigravity-ide\conversation_summaries.db")
 IDE_CONV_DIR = os.path.expanduser(r"~\.gemini\antigravity-ide\conversations")
 IDE_BRAIN_DIR = os.path.expanduser(r"~\.gemini\antigravity-ide\brain")
 
@@ -446,6 +447,51 @@ def extract_transcript_context(brain_dir: str) -> Tuple[str, str, str]:
 
     return first_prompt, last_user, last_agent
 
+def get_session_title(session_id: Optional[str]) -> str:
+    """Resuelve de forma robusta el título descriptivo de una sesión buscando en IDE DB, CLI DB, títulos IDE y transcripts."""
+    if not session_id:
+        return "Sesión de trabajo"
+
+    # 1. Buscar en bases de datos SQLite (IDE_DB_PATH primero, luego CLI_DB_PATH)
+    for db_path in [IDE_DB_PATH, CLI_DB_PATH]:
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path, timeout=3)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT title, preview FROM conversation_summaries WHERE conversation_id = ?",
+                    (session_id,)
+                )
+                row = cursor.fetchone()
+                conn.close()
+                if row:
+                    t, p = row[0], row[1]
+                    if t and t.strip() and t.strip() not in ("Sesión sin título", "Sesión de trabajo"):
+                        return t.strip()
+                    if p and p.strip():
+                        return p.strip()
+            except Exception:
+                pass
+
+    # 2. Buscar en títulos oficiales del IDE (history.entries / globalStorage)
+    try:
+        ide_titles = get_ide_session_titles()
+        if session_id in ide_titles and ide_titles[session_id].strip():
+            return ide_titles[session_id].strip()
+    except Exception:
+        pass
+
+    # 3. Extraer primer prompt del transcript
+    for brain_root in [IDE_BRAIN_DIR, CLI_BRAIN_DIR]:
+        b_session = os.path.join(brain_root, session_id)
+        if os.path.exists(b_session):
+            first_p, _, _ = extract_transcript_context(b_session)
+            if first_p and first_p.strip():
+                clean_p = first_p.strip()
+                return clean_p[:60] + ("..." if len(clean_p) > 60 else "")
+
+    return "Sesión de trabajo"
+
 def sync_ide_sessions(limit: int = 20):
     """Sincroniza las sesiones del IDE asociándolas a su verdadero workspace."""
     if not os.path.exists(IDE_CONV_DIR) or not os.path.exists(CLI_DB_PATH):
@@ -720,8 +766,8 @@ def sync_cli_to_ide(session_id: str, title: Optional[str] = None, project_path: 
         target_proj = project_path if project_path else state.current_project
         target_title = title if title else (state.active_session_title or "Sesión Remota Telegram")
 
-        # 3. Actualizar workspace_uris en conversation_summaries.db para filtros precisos
-        if target_proj and os.path.exists(CLI_DB_PATH):
+        # 3. Actualizar workspace_uris en conversation_summaries.db para filtros precisos (IDE y CLI)
+        if target_proj:
             try:
                 clean_ws = target_proj.replace("\\", "/").rstrip("/")
                 if not clean_ws.startswith("/"):
@@ -732,16 +778,18 @@ def sync_cli_to_ide(session_id: str, title: Optional[str] = None, project_path: 
                 ws_json = json.dumps([ws_uri_escaped])
                 proj_tag = os.path.basename(os.path.normpath(target_proj)).lower()
 
-                conn = sqlite3.connect(CLI_DB_PATH, timeout=5)
-                c = conn.cursor()
-                c.execute(
-                    "UPDATE conversation_summaries SET workspace_uris = ?, project_id = ? WHERE conversation_id = ? AND (workspace_uris IS NULL OR workspace_uris = '')",
-                    (ws_json, proj_tag, session_id)
-                )
-                conn.commit()
-                conn.close()
+                for target_db in [IDE_DB_PATH, CLI_DB_PATH]:
+                    if os.path.exists(target_db):
+                        conn = sqlite3.connect(target_db, timeout=5)
+                        c = conn.cursor()
+                        c.execute(
+                            "UPDATE conversation_summaries SET workspace_uris = ?, project_id = ? WHERE conversation_id = ?",
+                            (ws_json, proj_tag, session_id)
+                        )
+                        conn.commit()
+                        conn.close()
             except Exception as e_db:
-                print(f"[Sync CLI DB Update Error] {e_db}")
+                print(f"[Sync DB Update Error] {e_db}")
 
         # 4. Registrar en la UI nativa de Antigravity IDE (trajectorySummaries)
         if target_proj:
@@ -776,72 +824,98 @@ def get_relative_time(dt_str: str) -> str:
         return "Reciente"
 
 def query_sessions(limit: int = 8, project_filter: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Consulta conversation_summaries.db filtrando estrictamente por el proyecto activo."""
+    """Consulta conversation_summaries.db (IDE y CLI) filtrando estrictamente por el proyecto activo."""
     sync_ide_sessions(limit=limit + 10)
 
-    if not os.path.exists(CLI_DB_PATH):
-        return []
-
     sessions = []
+    seen_ids = set()
     proj_clean = os.path.basename(os.path.normpath(project_filter)).lower() if project_filter else ""
 
-    try:
-        conn = sqlite3.connect(CLI_DB_PATH)
-        cursor = conn.cursor()
-        
-        query = """
-            SELECT conversation_id, title, preview, last_modified_time, workspace_uris, source 
-            FROM conversation_summaries 
-            ORDER BY last_modified_time DESC 
-            LIMIT ?
-        """
-        cursor.execute(query, (limit * 4,))
-        rows = cursor.fetchall()
-        conn.close()
+    dbs = [IDE_DB_PATH, CLI_DB_PATH]
+    raw_rows = []
 
-        for row in rows:
-            cid, title, prev, mtime, uris, src = row
-            title = title.strip() if title else "Sesión sin título"
-            prev = prev.strip() if prev else ""
-            rel_time = get_relative_time(str(mtime))
-            
-            # Filtro estricto por proyecto
-            uris_str = str(uris).lower() if uris else ""
-            is_match = (proj_clean in uris_str) if proj_clean and uris_str else (not proj_clean)
+    for db_path in dbs:
+        if not os.path.exists(db_path):
+            continue
+        try:
+            conn = sqlite3.connect(db_path, timeout=3)
+            cursor = conn.cursor()
+            query = """
+                SELECT conversation_id, title, preview, last_modified_time, workspace_uris, source 
+                FROM conversation_summaries 
+                ORDER BY last_modified_time DESC 
+                LIMIT ?
+            """
+            cursor.execute(query, (limit * 4,))
+            rows = cursor.fetchall()
+            conn.close()
+            raw_rows.extend(rows)
+        except Exception as e:
+            print(f"[Sessions DB] Error consultando SQLite {db_path}: {e}")
 
+    # Ordenar todas las filas combinadas por timestamp descendente
+    raw_rows.sort(key=lambda r: str(r[3]), reverse=True)
 
-            if is_match:
-                sessions.append({
-                    "id": cid,
-                    "title": title,
-                    "preview": prev,
-                    "time": rel_time,
-                    "uris": uris,
-                    "source": src or "cli",
-                    "matches_project": True,
-                })
+    for row in raw_rows:
+        cid, title, prev, mtime, uris, src = row
+        if cid in seen_ids:
+            continue
+
+        # Resolver título legible (priorizar title válido, luego preview, luego get_session_title)
+        disp_title = ""
+        if title and title.strip() and title.strip() not in ("Sesión sin título", "Sesión de trabajo"):
+            disp_title = title.strip()
+        elif prev and prev.strip():
+            disp_title = prev.strip()
+        else:
+            disp_title = get_session_title(cid)
+
+        rel_time = get_relative_time(str(mtime))
+
+        # Filtro estricto por proyecto
+        uris_str = str(uris).lower() if uris else ""
+        is_match = (proj_clean in uris_str) if proj_clean and uris_str else (not proj_clean)
+
+        if is_match:
+            seen_ids.add(cid)
+            sessions.append({
+                "id": cid,
+                "title": disp_title,
+                "preview": prev.strip() if prev else "",
+                "time": rel_time,
+                "uris": uris,
+                "source": src or "ide",
+                "matches_project": True,
+            })
             if len(sessions) >= limit:
                 break
-
-    except Exception as e:
-        print(f"[Sessions DB] Error consultando SQLite: {e}")
 
     return sessions
 
 def get_latest_conversation_id() -> Optional[Tuple[str, str]]:
-    """Obtiene el ID y título de la sesión más recientemente registrada en SQLite."""
-    if not os.path.exists(CLI_DB_PATH):
-        return None
-    try:
-        conn = sqlite3.connect(CLI_DB_PATH)
-        cursor = conn.cursor()
-        cursor.execute("SELECT conversation_id, title FROM conversation_summaries ORDER BY last_modified_time DESC LIMIT 1")
-        row = cursor.fetchone()
-        conn.close()
-        if row:
-            return row[0], row[1] if row[1] else "Sesión de trabajo"
-    except Exception:
-        pass
+    """Obtiene el ID y título legible de la sesión más recientemente registrada en SQLite."""
+    for db_path in [IDE_DB_PATH, CLI_DB_PATH]:
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path, timeout=3)
+                cursor = conn.cursor()
+                cursor.execute(
+                    "SELECT conversation_id, title, preview FROM conversation_summaries ORDER BY last_modified_time DESC LIMIT 1"
+                )
+                row = cursor.fetchone()
+                conn.close()
+                if row:
+                    cid, t, p = row[0], row[1], row[2]
+                    title = ""
+                    if t and t.strip() and t.strip() not in ("Sesión sin título", "Sesión de trabajo"):
+                        title = t.strip()
+                    elif p and p.strip():
+                        title = p.strip()
+                    else:
+                        title = get_session_title(cid)
+                    return cid, title
+            except Exception:
+                pass
     return None
 
 # =============================================================================
@@ -1048,7 +1122,7 @@ async def execute_antigravity_task(
     )
 
     agy_bin = shutil.which("agy") or "agy"
-    cmd_args = [agy_bin]
+    cmd_args = [agy_bin, "--app_data_dir", "antigravity-ide"]
     if target_session:
         cmd_args += ["--conversation", target_session]
     
@@ -1184,7 +1258,11 @@ async def execute_antigravity_task(
             state.save()
         elif active_session_tracker:
             state.active_session_id = active_session_tracker
+            state.active_session_title = get_session_title(active_session_tracker)
             state.save()
+    else:
+        state.active_session_title = get_session_title(target_session)
+        state.save()
 
     # Sincronización bidireccional inmediata hacia el IDE
     final_sid = state.active_session_id or target_session
@@ -1427,13 +1505,7 @@ async def cmd_exit_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def load_and_present_session(update_or_query: Any, target_sid: str):
     """Carga una sesión y muestra su última interacción y estado del cerebro."""
     state.active_session_id = target_sid
-
-    # Buscar título
-    latest = query_sessions(limit=30, project_filter=state.current_project)
-    for s in latest:
-        if s["id"] == target_sid:
-            state.active_session_title = s["title"]
-            break
+    state.active_session_title = get_session_title(target_sid)
     state.save()
 
     # Buscar contexto previo de la sesión
@@ -1804,6 +1876,10 @@ def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
 
     # Sesión activa estricta (si es None, el usuario está en Modo Hilo Limpio)
     active_sid = state.active_session_id
+    if active_sid:
+        if not state.active_session_title or state.active_session_title.strip() in ("", "Sesión sin título", "Sesión de trabajo"):
+            state.active_session_title = get_session_title(active_sid)
+            state.save()
     active_title = state.active_session_title
 
     title_clean = sanitize_telegram_markdown(active_title or "✨ Modo Hilo Limpio")

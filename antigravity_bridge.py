@@ -49,8 +49,15 @@ import datetime
 import subprocess
 import ctypes
 import urllib.request
+import logging
 from pathlib import Path
 from typing import Optional, List, Tuple, Dict, Any
+
+logging.basicConfig(
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger("antigravity_bridge")
 
 from telegram import (
     InlineKeyboardButton,
@@ -164,6 +171,51 @@ AVAILABLE_MODES = {
     "plan": "🧠 Planificación (Arquitectura e Implementation Plan)",
 }
 
+# Cadena oficial de conmutación en cascada ante errores de saturación (503 / capacidad / cuotas)
+MODEL_CASCADE_CHAIN = [
+    "gemini-3.8-flash-high",
+    "gemini-3.8-flash-medium",
+    "gemini-3.7-flash-high",
+    "claude-sonnet-4-6",
+]
+
+def is_model_capacity_or_server_error(output: str) -> bool:
+    """Detecta si la salida de agy corresponde a un fallo de infraestructura del modelo (503, capacidad, cuotas, saturación)."""
+    if not output:
+        return False
+    out_lower = output.lower()
+    signals = [
+        "no capacity available for model",
+        "unavailable (code 503)",
+        "(code 503)",
+        "code 503",
+        "error 503",
+        "http 503",
+        "status code 503",
+        "resourceexhausted",
+        "rate limit exceeded",
+        "rate limit",
+        "quota exceeded",
+        "overloaded",
+        "model is currently overloaded",
+        "server is overloaded",
+    ]
+    return any(sig in out_lower for sig in signals)
+
+def get_next_cascade_model(current_model: str, attempted: List[str]) -> Optional[str]:
+    """Retorna el siguiente modelo en la cadena de cascada que no haya sido intentado todavía."""
+    if current_model in MODEL_CASCADE_CHAIN:
+        start_idx = MODEL_CASCADE_CHAIN.index(current_model) + 1
+        for m in MODEL_CASCADE_CHAIN[start_idx:]:
+            if m not in attempted:
+                return m
+
+    for m in MODEL_CASCADE_CHAIN:
+        if m not in attempted and m != current_model:
+            return m
+            
+    return None
+
 CONTINUE_TASK_PROMPT = (
     "Continúa exactamente donde quedó la tarea anterior en esta sesión. "
     "Revisa los archivos del proyecto y el avance registrado en el cerebro, no repitas trabajo ya realizado "
@@ -175,10 +227,11 @@ TASK_CANCEL_REQUESTED = False
 
 def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) -> Tuple[str, str]:
     """
-    Determina el modelo efectivo a utilizar por Antigravity CLI.
-    Si selected_model == 'auto', clasifica semánticamente el prompt y el modo:
-      - Utiliza gemini-3.7-flash-high por defecto para máxima estabilidad, velocidad instantánea y evitar saturación 503 de servidores.
-      - Utiliza claude-sonnet-4-6 para tareas profundas de arquitectura y planificación exhaustiva.
+    Determina el modelo inicial a utilizar por Antigravity CLI.
+    Si selected_model == 'auto':
+      - Comienza en gemini-3.8-flash-high.
+      - Ante saturación de Google (503) o error de servidor, la cascada automática
+        conmuta sucesivamente: gemini-3.8-flash-medium -> gemini-3.7-flash-high -> claude-sonnet-4-6.
       - Si el usuario selecciona explícitamente otro modelo en /models, se respeta esa elección.
     Retorna (effective_model_id, badge_for_telegram).
     """
@@ -188,7 +241,7 @@ def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) 
         return selected_model, badge
 
     if mode == "plan":
-        return "gemini-3.7-flash-high", "🎯 Auto (🧠 3.7 Plan)"
+        return "gemini-3.8-flash-high", "🎯 Auto (🧠 3.8 Plan)"
 
     p_lower = prompt.lower()
     deep_keywords = [
@@ -204,9 +257,9 @@ def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) 
     deep_score = sum(1 for kw in deep_keywords if kw in p_lower)
 
     if len(prompt) > 500 or deep_score >= 1:
-        return "claude-sonnet-4-6", "🎯 Auto (🧠 Sonnet Deep)"
+        return "gemini-3.8-flash-high", "🎯 Auto (⚡ 3.8 Deep)"
     
-    return "gemini-3.7-flash-high", "🎯 Auto (⚡ 3.7 Flash)"
+    return "gemini-3.8-flash-high", "🎯 Auto (🚀 3.8 High)"
 
 # =============================================================================
 # GESTOR DE ESTADO PERSISTENTE
@@ -1315,8 +1368,9 @@ async def execute_antigravity_task(
     override_session_id: Optional[str] = None,
     mode: Optional[str] = None,
     force_model: Optional[str] = None,
+    attempted_models: Optional[List[str]] = None,
 ):
-    """Ejecuta el CLI de Antigravity en segundo plano con telemetría en vivo y timeout dinámico por inactividad."""
+    """Ejecuta el CLI de Antigravity en segundo plano con telemetría en vivo, timeout dinámico y cascada automática de modelos."""
     chat_id = update.effective_chat.id
     target_session = override_session_id if override_session_id is not None else state.active_session_id
     effective_mode = mode if mode else getattr(state, "execution_mode", "accept-edits")
@@ -1327,6 +1381,10 @@ async def execute_antigravity_task(
         model_badge = model_label.split(" ")[1] if " " in model_label else force_model
     else:
         effective_model, model_badge = resolve_model(prompt, state.model, mode=effective_mode)
+
+    current_attempted = list(attempted_models) if attempted_models else []
+    if effective_model not in current_attempted:
+        current_attempted.append(effective_model)
 
     mode_icon = "🧠 Plan" if effective_mode == "plan" else "⚡ Directo"
     session_badge = f"`{target_session[:8]}...`" if target_session else "✨ Nueva Sesión"
@@ -1533,39 +1591,48 @@ async def execute_antigravity_task(
             output = "🛑 *Tarea cancelada:* El proceso fue detenido de inmediato a petición del usuario."
         TASK_CANCEL_REQUESTED = False
 
-    # Detección y recuperación automática ante error 503 (Servidores de Google saturados)
-    is_503_capacity = (
-        "No capacity available for model" in output
-        or "UNAVAILABLE (code 503)" in output
-        or "(code 503)" in output
-        or "code 503" in output
-    )
+    # Detección de errores de saturación, 503 o cuotas y Conmutación en Cascada
+    is_server_error = is_model_capacity_or_server_error(output) or (code != 0 and last_step == "Iniciando análisis...")
+
     if was_cancelled:
-        logger.info("[Auto-Fallback] Omitido porque el usuario canceló explícitamente la tarea.")
-    elif is_503_capacity and not force_model:
-        fallback_model = "gemini-3.7-flash-high"
-        logger.warning(f"[503 Auto-Fallback] {effective_model} sin capacidad. Conmutando automáticamente a {fallback_model}...")
-        try:
-            await status_msg.delete()
-        except Exception:
-            pass
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=(
-                f"⚠️ *Servidor de Google Saturado (Error 503):*\n"
-                f"El modelo `{effective_model}` no tiene capacidad en los servidores de Google en este momento.\n\n"
-                f"🔄 *Conmutación automática de contingencia:* Reintentando con `{fallback_model}`..."
-            ),
-            parse_mode=constants.ParseMode.MARKDOWN,
-        )
-        return await execute_antigravity_task(
-            update=update,
-            context=context,
-            prompt=prompt,
-            override_session_id=active_session_tracker or target_session,
-            mode=effective_mode,
-            force_model=fallback_model,
-        )
+        logger.info("[Auto-Cascade] Omitido porque el usuario canceló explícitamente la tarea.")
+    elif is_server_error:
+        next_model = get_next_cascade_model(effective_model, current_attempted)
+        if next_model:
+            current_label = AVAILABLE_MODELS.get(effective_model, effective_model)
+            next_label = AVAILABLE_MODELS.get(next_model, next_model)
+            cascade_step = len(current_attempted)
+            total_chain = len(MODEL_CASCADE_CHAIN)
+            logger.warning(
+                f"[Auto-Cascade] {effective_model} no disponible o saturado. "
+                f"Conmutando en cascada ({cascade_step}/{total_chain}) a {next_model}..."
+            )
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"⚠️ *Capacidad Agotada / Fallo en `{current_label}`:*\n"
+                    f"El servidor reportó saturación o falta de respuesta (Error 503).\n\n"
+                    f"🔄 *Conmutación Automática en Cascada ({cascade_step}/{total_chain}):*\n"
+                    f"Probando de inmediato con **`{next_label}`**..."
+                ),
+                parse_mode=constants.ParseMode.MARKDOWN,
+            )
+            return await execute_antigravity_task(
+                update=update,
+                context=context,
+                prompt=prompt,
+                override_session_id=active_session_tracker or target_session,
+                mode=effective_mode,
+                force_model=next_model,
+                attempted_models=current_attempted,
+            )
+        else:
+            logger.error(f"[Auto-Cascade] Todos los modelos de la cadena ({current_attempted}) fueron intentados y fallaron.")
 
     total_secs = int(time.time() - start_time)
 

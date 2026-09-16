@@ -118,16 +118,32 @@ El bot enviará una orden determinística que instruye a la IA a:
   > 🔌 *Energía restaurada: La laptop vuelve a estar conectada a la corriente eléctrica.*
 ---
 
-### Escenario F: Error 503 UNAVAILABLE (Saturación de Capacidad en Google)
+### Escenario F: Error 503 UNAVAILABLE y Cascada Inteligente Multimodelo
 
-* **Síntoma:** El modelo devuelve `Error: UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server` (o `gemini-3.8-flash-medium` entra en bucle de reintento infinito).
-* **Causa:** Los servidores de Google para la familia Gemini 3.8 pueden experimentar saturación global de capacidad en horas pico.
-* **Mecanismo de Resiliencia del Puente:**  
-  1. **Auto-Fallback a Gemini 3.7 Flash High:** Si una tarea falla con código 503 en 3.8, el puente conmuta automáticamente a **`gemini-3.7-flash-high`** (probado, ultrarrápido y con 100% de disponibilidad continua).
-  2. **Selección Manual Inmediata:** Desde Telegram, puedes ejecutar `/models` y elegir directamente:
-     * `💡 Gemini 3.7 Flash High` (velocidad instantánea, sin colas).
-     * `🧠 Claude Sonnet 4.6 (Thinking)` (máxima profundidad para arquitectura y refactors).
-  3. **Auto-Router Actualizado:** En modo `auto`, el bot prioriza `gemini-3.7-flash-high` para peticiones generales y `claude-sonnet-4-6` para análisis de arquitectura pesados.
+* **Síntoma:** El modelo devuelve `Error: UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server` o se queda colgado esperando respuesta del servidor.
+* **Causa:** Los servidores de Google para la familia Gemini 3.8 pueden experimentar saturación global de capacidad en horas de alta demanda.
+* **Mecanismo de Resiliencia: Cascada Automática en 4 Niveles (`MODEL_CASCADE_CHAIN`):**  
+  El puente no se detiene ante el primer fallo ni te traslada el problema; implementa una **conmutación secuencial automática e inmediata**:
+  ```text
+  1. Gemini 3.8 Flash High (Máxima capacidad de razonamiento)
+         │ (¿Error 503 / Saturado / Cuota?)
+         ▼
+  2. Gemini 3.8 Flash Medium (Modelo intermedio de la familia 3.8)
+         │ (¿Error 503 / Saturado / Hang?)
+         ▼
+  3. Gemini 3.7 Flash High (Velocidad instantánea, 100% disponible)
+         │ (¿Fallo persistente?)
+         ▼
+  4. Claude Sonnet 4.6 Thinking (Máxima potencia de Anthropic)
+         │
+         ▼
+  [Solo si fallan TODOS los 4 modelos se emite el error final]
+  ```
+  * **Notificación Transparente:** En Telegram verás una alerta instantánea que te informa:
+    > ⚠️ *Capacidad Agotada en Gemini 3.8 Flash High (Error 503)*  
+    > 🔄 *Conmutación Automática en Cascada (1/4): Probando con Gemini 3.8 Flash Medium...*
+  * **Interrupción Inmediata:** Si en cualquier momento pulsas `[🛑 Detener Tarea]`, la cascada se cancela de forma inmediata sin saltar a más modelos.
+  * **Selección Manual:** Si deseas saltarte la cascada y usar un modelo fijo directamente, ejecuta `/models` y selecciona el que desees.
 
 ---
 

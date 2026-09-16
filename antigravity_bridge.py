@@ -177,8 +177,8 @@ def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) 
     """
     Determina el modelo efectivo a utilizar por Antigravity CLI.
     Si selected_model == 'auto', clasifica semánticamente el prompt y el modo:
-      - Modo 'plan', arquitectura, refactorizaciones, migraciones, planes -> gemini-3.8-flash-high (Profundo y robusto)
-      - Consultas simples, UI, CSS, ajustes puntuales -> gemini-3.8-flash-medium (Ultrarrápido)
+      - Utiliza gemini-3.8-flash-medium por defecto para máxima estabilidad, velocidad y evitar saturación 503 de servidores.
+      - Si el usuario selecciona explícitamente otro modelo en /models, se respeta esa elección.
     Retorna (effective_model_id, badge_for_telegram).
     """
     if selected_model != "auto":
@@ -186,9 +186,8 @@ def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) 
         badge = label.split(" ")[1] if " " in label else selected_model
         return selected_model, badge
 
-    # En modo plan, siempre utilizar modelo High para garantizar pensamiento profundo y evitar congestión de API
     if mode == "plan":
-        return "gemini-3.8-flash-high", "🎯 Auto (⚡ High Plan)"
+        return "gemini-3.8-flash-medium", "🎯 Auto (🧠 Medium Plan)"
 
     p_lower = prompt.lower()
     deep_keywords = [
@@ -203,11 +202,9 @@ def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) 
 
     deep_score = sum(1 for kw in deep_keywords if kw in p_lower)
 
-    # Si el prompt es muy largo (> 500 caracteres) o tiene palabras clave de alta complejidad
     if len(prompt) > 500 or deep_score >= 1:
-        return "gemini-3.8-flash-high", "🎯 Auto (⚡ High)"
+        return "gemini-3.8-flash-medium", "🎯 Auto (⚡ Medium)"
     
-    # Por defecto para tareas cotidianas de UI, CSS, fixes, consultas o git:
     return "gemini-3.8-flash-medium", "🎯 Auto (🚀 Medium)"
 
 # =============================================================================
@@ -1267,8 +1264,13 @@ def get_newest_brain_session_id(after_timestamp: float) -> Optional[str]:
                 for entry in os.scandir(root):
                     if entry.is_dir():
                         try:
-                            m = entry.stat().st_mtime
-                            if m >= (after_timestamp - 5):
+                            # Comprobar mtime del transcript.jsonl (se actualiza en cada paso) o de la carpeta
+                            t_log = os.path.join(entry.path, ".system_generated", "logs", "transcript.jsonl")
+                            if os.path.exists(t_log):
+                                m = os.path.getmtime(t_log)
+                            else:
+                                m = entry.stat().st_mtime
+                            if m >= (after_timestamp - 3):
                                 candidates.append((m, entry.name))
                         except Exception:
                             pass
@@ -1285,12 +1287,20 @@ async def execute_antigravity_task(
     prompt: str,
     override_session_id: Optional[str] = None,
     mode: Optional[str] = None,
+    force_model: Optional[str] = None,
 ):
     """Ejecuta el CLI de Antigravity en segundo plano con telemetría en vivo y timeout dinámico por inactividad."""
     chat_id = update.effective_chat.id
     target_session = override_session_id if override_session_id is not None else state.active_session_id
     effective_mode = mode if mode else getattr(state, "execution_mode", "accept-edits")
-    effective_model, model_badge = resolve_model(prompt, state.model, mode=effective_mode)
+    
+    if force_model:
+        effective_model = force_model
+        model_label = AVAILABLE_MODELS.get(force_model, force_model)
+        model_badge = model_label.split(" ")[1] if " " in model_label else force_model
+    else:
+        effective_model, model_badge = resolve_model(prompt, state.model, mode=effective_mode)
+
     mode_icon = "🧠 Plan" if effective_mode == "plan" else "⚡ Directo"
     session_badge = f"`{target_session[:8]}...`" if target_session else "✨ Nueva Sesión"
     proj_name = os.path.basename(os.path.normpath(state.current_project)) if state.current_project else "Sin Proyecto"
@@ -1308,7 +1318,7 @@ async def execute_antigravity_task(
     )
 
     agy_bin = shutil.which("agy") or "agy"
-    cmd_args = [agy_bin, "--app_data_dir", "antigravity-ide"]
+    cmd_args = [agy_bin]
     if target_session:
         cmd_args += ["--conversation", target_session]
     
@@ -1378,10 +1388,6 @@ async def execute_antigravity_task(
             # 1. Detección en vivo de sesión nueva si empezó sin ID
             if not active_session_tracker:
                 detected = get_newest_brain_session_id(start_time)
-                if not detected:
-                    latest = get_latest_conversation_id()
-                    if latest and latest[0]:
-                        detected = latest[0]
                 if detected:
                     active_session_tracker = detected
 
@@ -1479,6 +1485,38 @@ async def execute_antigravity_task(
     finally:
         CURRENT_TASK_PROC = None
         TASK_CANCEL_REQUESTED = False
+
+    # Detección y recuperación automática ante error 503 (Servidores de Google saturados)
+    is_503_capacity = (
+        "No capacity available for model" in output
+        or "UNAVAILABLE (code 503)" in output
+        or "(code 503)" in output
+        or "code 503" in output
+    )
+    if is_503_capacity and "flash-high" in effective_model and not force_model:
+        fallback_model = "gemini-3.8-flash-medium"
+        logger.warning(f"[503 Auto-Fallback] {effective_model} sin capacidad. Conmutando automáticamente a {fallback_model}...")
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=(
+                f"⚠️ *Servidor de Google Saturado (Error 503):*\n"
+                f"El modelo `{effective_model}` no tiene capacidad en los servidores de Google en este momento.\n\n"
+                f"🔄 *Conmutación automática de contingencia:* Reintentando con `{fallback_model}`..."
+            ),
+            parse_mode=constants.ParseMode.MARKDOWN,
+        )
+        return await execute_antigravity_task(
+            update=update,
+            context=context,
+            prompt=prompt,
+            override_session_id=active_session_tracker or target_session,
+            mode=effective_mode,
+            force_model=fallback_model,
+        )
 
     total_secs = int(time.time() - start_time)
 
@@ -1588,14 +1626,37 @@ async def execute_antigravity_task(
         caption=f"📄 Salida completa de Antigravity ({total_secs}s):",
     )
 
-    # ⚡ Turbo AutoPush: Si está habilitado y hay cambios, commitear y pushear de inmediato
-    if has_git_changes and state.autopush:
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text="⚡ *AutoPush Activo:* Se detectaron cambios generados por la IA. Procediendo a commit & push automático hacia `origin HEAD`...",
-            parse_mode=constants.ParseMode.MARKDOWN,
-        )
-        await do_commit_and_push(update, context)
+    # ⚡ Turbo AutoPush: BLINDAJE ESTRICTO CONTRA COMMITS ACCIDENTALES
+    # 1. NUNCA disparar si la tarea NO concluyó con éxito (code != 0, ej: timeout, error o cancelación).
+    # 2. NUNCA disparar si la sesión de Antigravity no modificó archivos de código en esta iteración.
+    #    (Evita commitear cambios externos realizados por el usuario en el IDE o pruebas manuales).
+    session_touched = get_session_modified_files(final_sid)
+    
+    if state.autopush:
+        if code == 0 and has_git_changes and len(session_touched) > 0:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=(
+                    f"⚡ *AutoPush Activo:* Se validaron {len(session_touched)} archivo(s) modificados "
+                    f"por esta sesión. Procediendo a commit & push automático hacia `origin HEAD`..."
+                ),
+                parse_mode=constants.ParseMode.MARKDOWN,
+            )
+            await do_commit_and_push(update, context)
+        elif code != 0 and has_git_changes:
+            logger.warning(f"[AutoPush] Omitido por seguridad: La tarea finalizó con código {code} (timeout/error/503). No se enviarán cambios pendientes.")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="⚠️ *AutoPush Omitido:* La tarea fue interrumpida o superó el tiempo límite. Por seguridad, los cambios locales NO fueron enviados a Git.",
+                parse_mode=constants.ParseMode.MARKDOWN,
+            )
+        elif code == 0 and has_git_changes and len(session_touched) == 0:
+            logger.info("[AutoPush] Omitido: Hay cambios en git pero no fueron generados por esta sesión de Antigravity.")
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="ℹ️ *AutoPush Omitido:* Se detectaron cambios en Git, pero corresponden a modificaciones externas (IDE/manuales) y no a esta sesión de Antigravity. Usa `/commit` si deseas enviarlos manualmente.",
+                parse_mode=constants.ParseMode.MARKDOWN,
+            )
 
 # =============================================================================
 # COMANDOS DE TELEGRAM (/start, /projects, /sessions, etc.)

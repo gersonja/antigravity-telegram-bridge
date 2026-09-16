@@ -21,6 +21,7 @@ scratch/
 *.txt
 *.zip
 *.tar.gz
+*.pdf
 
 # 4. Caché de Python
 __pycache__/

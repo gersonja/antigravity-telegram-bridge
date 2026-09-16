@@ -113,8 +113,24 @@ El bot enviará una orden determinística que instruye a la IA a:
   > ⚠️ *Alerta: La laptop se desconectó de la corriente eléctrica. Batería al 85% (~3h 20m restantes).*
 * **Si se restablece la energía:**  
   > 🔌 *Energía restaurada: La laptop vuelve a estar conectada a la corriente eléctrica.*
-* **Si la laptop se apaga por batería agotada:**  
-  Al volver la luz y encender la máquina, el servicio arranca automáticamente vía el registro `HKCU Run` sin requerir que inicies sesión con privilegios de administrador.
+---
+
+### Escenario F: Error 503 UNAVAILABLE (Saturación de Capacidad en Google)
+
+* **Síntoma:** El modelo devuelve `Error: UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server`.
+* **Causa:** Los servidores de Google para el modelo solicitado (frecuentemente modelos de razonamiento profundo como `flash-high`) alcanzaron temporalmente su límite global de concurrencia.
+* **Mecanismo de Resiliencia del Puente:**  
+  El puente analiza la salida de `agy`. Si detecta un error `code 503` o `No capacity available`, **cancela la tarea fallida e inmediatamente la relanza con `gemini-3.8-flash-medium`** notificándote por Telegram. `gemini-3.8-flash-medium` cuenta con enorme disponibilidad y responderá en segundos.
+
+---
+
+### Escenario G: Blindaje Anti-Commits Huérfanos en AutoPush
+
+* **Problema:** Si tienes archivos sin guardar o modificaciones locales en el IDE visual y una tarea remota de Telegram falla o entra en timeout, ¿podría AutoPush commitear accidentalmente tu trabajo del IDE?
+* **Solución de Blindaje Estricto:**  
+  El puente implementa una **doble compuerta de validación** antes de cualquier commit:
+  1. **Validación de Éxito (`code == 0`):** Si la tarea terminó en timeout, error 503 o fue cancelada por el usuario con `/stop`, AutoPush **se desactiva automáticamente** y notifica que los cambios locales no fueron enviados.
+  2. **Validación de Archivos Propios (`get_session_modified_files`):** Si la tarea concluyó pero el agente no tocó ningún archivo de código (por ejemplo, solo analizó o diseñó un plan), AutoPush **no tocará Git**, protegiendo cualquier archivo que tú estuvieras editando manualmente en tu computadora.
 
 ---
 

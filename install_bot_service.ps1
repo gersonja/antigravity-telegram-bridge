@@ -12,23 +12,29 @@ $ScriptPath = Join-Path $ScriptDir "antigravity_bridge.py"
 $WorkingDir = $ScriptDir
 
 # Ubicar pythonw.exe (primero en PATH, luego en rutas estandar de Windows)
-$PythonwCmd = Get-Command pythonw.exe -ErrorAction SilentlyContinue
-if ($PythonwCmd) {
-    $PythonwPath = $PythonwCmd.Source
+$PywCmd = Get-Command pyw.exe -ErrorAction SilentlyContinue
+if ($PywCmd) {
+    $PythonwPath = $PywCmd.Source
+    $CommandValue = "`"$PythonwPath`" -3 `"$ScriptPath`""
+    $LaunchArgs = @("-3", "`"$ScriptPath`"")
 } else {
-    $Candidates = @(
-        "$env:LOCALAPPDATA\Programs\Python\Python313\pythonw.exe",
-        "$env:LOCALAPPDATA\Programs\Python\Python312\pythonw.exe",
-        "$env:LOCALAPPDATA\Programs\Python\Python311\pythonw.exe",
-        "C:\Python313\pythonw.exe",
-        "C:\Python312\pythonw.exe",
-        "C:\Python311\pythonw.exe"
-    )
-    $PythonwPath = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    $PythonwCmd = Get-Command pythonw.exe -ErrorAction SilentlyContinue
+    if ($PythonwCmd) {
+        $PythonwPath = $PythonwCmd.Source
+    } else {
+        $Candidates = @(
+            "$env:LOCALAPPDATA\Programs\Python\Python313\pythonw.exe",
+            "$env:LOCALAPPDATA\Programs\Python\Python312\pythonw.exe",
+            "$env:LOCALAPPDATA\Programs\Python\Python311\pythonw.exe",
+            "C:\Python313\pythonw.exe",
+            "C:\Python312\pythonw.exe",
+            "C:\Python311\pythonw.exe"
+        )
+        $PythonwPath = $Candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    $CommandValue = "`"$PythonwPath`" `"$ScriptPath`""
+    $LaunchArgs = @("`"$ScriptPath`"")
 }
-
-
-$CommandValue = "`"$PythonwPath`" `"$ScriptPath`""
 
 Write-Host "==========================================================" -ForegroundColor Cyan
 Write-Host " Configurando Inicio Automático de Antigravity Bridge...  " -ForegroundColor Cyan
@@ -63,8 +69,8 @@ foreach ($p in $BridgeProcs) {
     }
 }
 
-# 4. Iniciar el bot en segundo plano con pythonw.exe (completamente invisible)
-Start-Process -FilePath $PythonwPath -ArgumentList "`"$ScriptPath`"" -WorkingDirectory $WorkingDir -WindowStyle Hidden
+# 4. Iniciar el bot en segundo plano con pythonw.exe o pyw.exe (completamente invisible)
+Start-Process -FilePath $PythonwPath -ArgumentList $LaunchArgs -WorkingDirectory $WorkingDir -WindowStyle Hidden
 Start-Sleep -Seconds 2
 
 # 5. Verificar proceso activo

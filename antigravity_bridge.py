@@ -164,6 +164,12 @@ AVAILABLE_MODES = {
     "plan": "🧠 Planificación (Arquitectura e Implementation Plan)",
 }
 
+CONTINUE_TASK_PROMPT = (
+    "Continúa exactamente donde quedó la tarea anterior en esta sesión. "
+    "Revisa los archivos del proyecto y el avance registrado en el cerebro, no repitas trabajo ya realizado "
+    "ni comiences desde cero; avanza al siguiente paso pendiente o resume el estado final alcanzado si la tarea ya concluyó."
+)
+
 def resolve_model(prompt: str, selected_model: str, mode: Optional[str] = None) -> Tuple[str, str]:
     """
     Determina el modelo efectivo a utilizar por Antigravity CLI.
@@ -1482,12 +1488,22 @@ async def execute_antigravity_task(
     latest_plan = find_brain_artifact(state.active_session_id, "implementation_plan.md")
     plan_available = bool(latest_plan and os.path.exists(latest_plan))
 
+    latest_walkthrough = find_brain_artifact(state.active_session_id, "walkthrough.md")
+    walkthrough_available = bool(latest_walkthrough and os.path.exists(latest_walkthrough))
+
     buttons = []
     if plan_available:
         buttons.append([
             InlineKeyboardButton("🧠 Ver Plan", callback_data="view_plan"),
             InlineKeyboardButton("▶️ Ejecutar Plan", callback_data="exec_plan"),
         ])
+
+    action_row = [
+        InlineKeyboardButton("▶️ Continuar Tarea", callback_data="continue_task")
+    ]
+    if walkthrough_available:
+        action_row.append(InlineKeyboardButton("📄 Ver Walkthrough", callback_data="view_walkthrough"))
+    buttons.append(action_row)
 
     if has_git_changes:
         buttons.append([
@@ -1496,20 +1512,30 @@ async def execute_antigravity_task(
         ])
         buttons.append([
             InlineKeyboardButton("🗑️ Revertir Cambios", callback_data="revert_prompt"),
+            InlineKeyboardButton("💬 Nueva Sesión", callback_data="ses_NEW"),
         ])
     else:
         buttons.append([
-            InlineKeyboardButton("💬 Nueva Sesión", callback_data="ses_NEW"),
             InlineKeyboardButton("🔍 Ver Diff", callback_data="view_diff"),
+            InlineKeyboardButton("💬 Nueva Sesión", callback_data="ses_NEW"),
         ])
 
     reply_markup = InlineKeyboardMarkup(buttons)
 
+    status_icon = "🤖" if code == 0 else "⚠️"
+    status_title = "Respuesta de Antigravity" if code == 0 else "Alerta / Timeout en Antigravity"
     header = (
-        f"🤖 *Respuesta de Antigravity* `({total_secs}s | {model_badge} | {mode_icon})`\n"
+        f"{status_icon} *{status_title}* `({total_secs}s | {model_badge} | {mode_icon})`\n"
         f"💬 *Sesión:* `{state.active_session_title or (state.active_session_id[:8] if state.active_session_id else 'activa')}`\n"
         f"──────────────────────────────\n\n"
     )
+
+    if code != 0:
+        output += (
+            "\n\n💡 *¿Deseas continuar?*\n"
+            "Presiona **▶️ Continuar Tarea** abajo para que Antigravity retome exactamente donde quedó "
+            "sin repetir trabajo ni reiniciar desde cero."
+        )
 
     footer = ""
     if has_git_changes:
@@ -1613,6 +1639,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     help_text += "💬 *GESTIÓN DE SESIONES (CHATS)*\n"
     if session_active:
+        help_text += "• `/continue` o `/continuar` - *Retomar tarea activa* sin reiniciar de cero\n"
         help_text += "• `/exit_session` o `/leave` - *Salir de la sesión actual* (modo limpio)\n"
         help_text += "• `/session <id>` - Cambiar directamente a otra sesión por ID\n"
     else:
@@ -1758,10 +1785,14 @@ async def load_and_present_session(update_or_query: Any, target_sid: str):
     if has_plan:
         first_row.append(InlineKeyboardButton("🧠 Ver Plan", callback_data="view_plan"))
         first_row.append(InlineKeyboardButton("▶️ Ejecutar Plan", callback_data="exec_plan"))
+    else:
+        first_row.append(InlineKeyboardButton("▶️ Continuar Tarea", callback_data="continue_task"))
     if first_row:
         keyboard.append(first_row)
 
     second_row = []
+    if has_plan:
+        second_row.append(InlineKeyboardButton("▶️ Continuar Tarea", callback_data="continue_task"))
     if has_walkthrough:
         second_row.append(InlineKeyboardButton("📄 Ver Walkthrough", callback_data="view_walkthrough"))
     second_row.append(InlineKeyboardButton("🔍 Ver Diff", callback_data="view_diff"))
@@ -2328,6 +2359,27 @@ async def cmd_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_new_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cmd_exit_session(update, context)
+
+async def cmd_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Continúa la tarea activa exactamente donde quedó sin reiniciar desde cero."""
+    if not is_authorized(update):
+        return
+
+    msg_target = update.effective_message
+    if not state.current_project:
+        await safe_reply_message(msg_target, "⚠️ No has seleccionado un proyecto. Envía `/projects` primero.")
+        return
+
+    if not state.active_session_id:
+        await safe_reply_message(msg_target, "⚠️ No hay una sesión activa para continuar. Selecciona una sesión con `/sessions`.")
+        return
+
+    extra_instructions = " ".join(context.args).strip() if context.args else ""
+    prompt = CONTINUE_TASK_PROMPT
+    if extra_instructions:
+        prompt += f"\n\nInstrucciones adicionales del usuario:\n{extra_instructions}"
+
+    await execute_antigravity_task(update, context, prompt)
 
 async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
@@ -3215,6 +3267,17 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "view_walkthrough":
             await cmd_walkthrough(update, context)
 
+        elif data == "continue_task":
+            if not state.active_session_id:
+                await safe_edit_message(query, "⚠️ No hay una sesión activa para continuar. Selecciona una con `/sessions`.")
+                return
+            await safe_edit_message(
+                query,
+                "▶️ *Continuando tarea...*\n"
+                "Retomando la sesión exactamente donde quedó, sin repetir trabajo..."
+            )
+            await execute_antigravity_task(update, context, CONTINUE_TASK_PROMPT)
+
         elif data == "exec_plan":
             if not state.active_session_id:
                 await safe_edit_message(query, "⚠️ No hay una sesión activa para ejecutar el plan. Selecciona una sesión con `/sessions`.")
@@ -3352,6 +3415,8 @@ def main():
     app.add_handler(CommandHandler("leave", cmd_exit_session))
     app.add_handler(CommandHandler("close_session", cmd_exit_session))
     app.add_handler(CommandHandler("new", cmd_new_session))
+    app.add_handler(CommandHandler("continue", cmd_continue))
+    app.add_handler(CommandHandler("continuar", cmd_continue))
 
     # Cerebro, Modos y Artefactos
     app.add_handler(CommandHandler("plan", cmd_plan))

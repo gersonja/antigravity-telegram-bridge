@@ -187,6 +187,7 @@ pwsh -File install_bot_service.ps1
 | `/sessions` | Lista las conversaciones guardadas del proyecto activo. | `[ 📌 <Título> ]` + `[ ➕ Hilo Limpio ]` |
 | `/session <id>` | Salto directo a una sesión por su identificador UUID. | Ficha de sesión. |
 | `/exit_session` | Sale de la sesión activa y activa el *Modo Hilo Limpio*. | `[ 💬 Entrar a Sesión ]` |
+| `/continue` o `/continuar` | **Reanuda la tarea activa:** Retoma el trabajo exactamente donde quedó con prompt determinístico anti-reinicio. | `[ ▶️ Continuar Tarea ]` |
 | `/plan [tarea]` | **Atajo:** Genera plan de arquitectura formal o muestra el `implementation_plan.md` actual. | `[ ▶️ Ejecutar Plan ]` |
 | `/mode` o `/modos` | Alterna modo de ejecución: ⚡ Directo (`accept-edits`) vs 🧠 Planificación (`plan`). | `[ ⚡ Directo ]`, `[ 🧠 Plan ]` |
 | `/walkthrough` | Muestra el informe de tareas y cambios implementados (`walkthrough.md`). | Documento descargable. |

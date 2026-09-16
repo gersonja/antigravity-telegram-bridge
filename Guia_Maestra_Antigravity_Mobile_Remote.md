@@ -225,10 +225,20 @@ El comando y botón de diff cuentan con un motor dual que resuelve el problema d
 
 - **Motor Guiado por Pasos Activos (Zero Timeouts Arbitrarios):**  
   Eliminación de cortes fijos (como el antiguo timeout de 300s). El puente implementa un *Idle Watchdog* (`STEP_IDLE_TIMEOUT = 600s`) que monitorea `transcript.jsonl` y resetea continuamente el contador a cero cada vez que el agente cambia de paso o edita un archivo. Ofrece hasta 10 minutos completos de inactividad por paso para dar máxima holgura a compilaciones pesadas y reintentos de red.
-- **Botón y Comando de Continuación Determinística (`▶️ Continuar Tarea` / `/continue` / `/continuar`):**  
-  Resuelve de raíz el problema de reanudación de sesiones tras un timeout o pausa de turno. En lugar de que el usuario envíe mensajes ambiguos como *"continúa donde quedamos"* (lo que suele provocar que la IA olvide el contexto y empiece desde cero), este botón inyecta un prompt determinístico que obliga a Antigravity a inspeccionar los archivos del proyecto y el avance registrado en el cerebro (`brain/`), prohibiéndole rehacer tareas ya completadas y avanzando directamente al siguiente paso pendiente o resumiendo el estado final.
-- **Modo Plan Estricto con Guardián Cognitivo:**  
-  Al activar `/mode plan` o usar `/plan <tarea>`, el puente inyecta un guardián cognitivo estricto que prohíbe el uso de herramientas de modificación de código en ese turno, obligando a Antigravity a generar exclusivamente `implementation_plan.md` y detenerse de inmediato para entregar el plan a Telegram, evitando que `--dangerously-skip-permissions` auto-apruebe la ejecución sin consentimiento humano.
+- **Detección Proactiva de Respuesta Final del Modelo:**  
+  Cuando el modelo concluye su respuesta final (`PLANNER_RESPONSE` sin llamadas a herramientas en `transcript.jsonl`) pero subprocesos hijos en segundo plano mantienen las tuberías de salida abiertas, el puente detecta la inactividad, extrae la respuesta directamente del transcript y libera el subproceso sin hacer esperar al usuario.
+- **Control en Vivo y Cancelación Inmediata (`/stop`, `/cancel` y botón `[ 🛑 Detener Tarea ]`):**  
+  Durante la ejecución de cualquier tarea, el mensaje de estado en vivo emitido a Telegram incluye el botón interactivo `[ 🛑 Detener / Cancelar Tarea ]`. Al presionarlo, o al enviar los comandos `/stop`, `/cancel` o `/detener`, el puente activa `TASK_CANCEL_REQUESTED` y ejecuta `kill_process_tree()` inmediatamente, cancelando el proceso de `agy` y todos sus subprocesos hijos en milisegundos sin dejar procesos fantasma ni puertos colgados en Windows.
+- **Guardrails de Seguridad del Entorno (Prohibido Localhost y SRI no Solicitado):**  
+  El puente inyecta en cada interacción una política inquebrantable:
+  1. *Prohibido Localhost:* Prohibición absoluta de levantar microservicios o daemons en `localhost` (`node dist/main.js`, `npm run start:dev`, `redis-server`). Toda verificación local debe ser estática (`npm run build`, `tsc --noEmit`). Las pruebas de ejecución corren en el VPS de producción con PM2.
+  2. *Prohibido SRI / Fiscal sin Orden Expresa:* Prohibición estricta de generar o enviar comprobantes electrónicos o interactuar con el SRI sin una solicitud explícita del usuario.
+- **Modo Plan Estricto con Bloqueo de Auto-Aprobación del Stop Hook:**  
+  Al activar `/mode plan` o usar `/plan <tarea>`, el puente neutraliza el gancho interno de Antigravity CLI (`Stop hook blocked termination: The user has automatically approved the artifact`) que se disparaba automáticamente con `--dangerously-skip-permissions`. El agente tiene la orden tajante de detenerse obligatoriamente tras entregar `implementation_plan.md`, esperando la aprobación humana mediante el botón `[ ▶️ Ejecutar Plan ]`.
+- **UX Libre de Ambigüedades en Reanudación (`code == 0` vs `code != 0`):**  
+  Para erradicar la confusión sobre si una tarea terminó o sigue pendiente:
+  - Si la tarea concluye con éxito (`code == 0`): Muestra `✅ Tarea Concluida con Éxito`, el estado `🏁 Completado` y el botón `[ ▶️ Continuar Tarea ]` **se oculta automáticamente**, evitando clics accidentales.
+  - Si ocurre un timeout, interrupción o caída (`code != 0`): Muestra `⚠️ Tarea Interrumpida` y activa el botón **`[ ▶️ Continuar Tarea ]`** con un prompt determinístico que obliga a la IA a revisar los archivos modificados y el cerebro (`brain/`), prohibiéndole rehacer tareas ya completadas y avanzando directamente al siguiente paso pendiente.
 - **Git Diff Inteligente con Fallback a HEAD:**  
   Si Turbo AutoPush o un commit previo ya enviaron los cambios al árbol de Git, el botón `[ 🔍 Ver Diff ]` no queda en blanco; realiza una inspección inmediata de `HEAD` (`git show --stat` y `git diff HEAD~1..HEAD`), permitiendo ver con precisión las líneas tocadas en esa iteración.
 - **Supresión Total de Consolas en Windows (`CREATE_NO_WINDOW`):**  

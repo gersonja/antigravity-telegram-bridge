@@ -50,40 +50,55 @@ graph TD
 - **Auto-Router y Multimodelo:** Selector automático inteligente (`auto`) que clasifica tareas entre Gemini 3.8 Flash Medium (ultrarrápido para UI, CSS, fixes) y Gemini 3.8 Flash High (análisis profundo y arquitectura). También soporta `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, etc.
 - **Modos de Ejecución Flexibles (`/mode`):** Alterna entre **⚡ Directo (`accept-edits`)** para ejecución inmediata y **🧠 Planificación (`plan`)** para diseño previo de arquitectura.
 - **Atajo Rápido de Planificación (`/plan <tarea>`):** Escribe `/plan` seguido de tu objetivo para entrar directamente en modo plan sin cambiar la configuración global. Antigravity investiga, genera el `implementation_plan.md` y te ofrece el botón táctil **[ ▶️ Ejecutar Plan ]** para aplicarlo.
-- **Telemetría Paso a Paso en Vivo:** Telegram muestra en tiempo real qué herramienta ejecuta el agente (*"💻 Terminal: git status"*, *"📝 Editando: AppService.java"*, *"🔍 Inspeccionando código..."*).
+- **Guardián de Modo Plan Estricto (Bloqueo de Auto-Aprobación):** Resuelve el problema donde `--dangerously-skip-permissions` activaba el gancho interno `Stop hook blocked termination: The user has automatically approved the artifact` auto-ejecutando tareas sin consentimiento. El puente neutraliza este comportamiento y obliga a la IA a detenerse siempre tras entregar el plan, esperando la aprobación humana en Telegram.
+- **Telemetría Paso a Paso en Vivo con Botón de Detención:** Telegram muestra en tiempo real qué herramienta ejecuta el agente (*"💻 Terminal: git status"*, *"📝 Editando: AppService.java"*, *"🔍 Inspeccionando código..."*), acompañando cada actualización de un botón interactivo **[ 🛑 Detener / Cancelar Tarea ]**.
 - **Gestión de Brain & Planes:** Detecta automáticamente `implementation_plan.md` y `walkthrough.md`. Puedes revisar el resumen estructurado en tu teléfono y pulsar **[ ▶️ Ejecutar Plan ]** con un solo toque.
 
 ### 2. ⏱️ Motor Autónomo Guiado por Actividad (Zero Timeouts)
-- **Sin Cortes Forzados de Tiempo:** Se eliminaron los límites arbitrarios tradicionales (como el timeout fijo de 300s). El agente puede trabajar de forma autónoma durante 10, 20 o más de 30 minutos si la tarea lo requiere (ej. refactorizaciones de más de 120 pasos).
-- **Idle Watchdog Dinámico (`STEP_IDLE_TIMEOUT` = 360s):** El temporizador de inactividad se reinicia continuamente a cero con cada cambio de paso, lectura de archivo o escritura en el log. Dispone de 6 minutos completos por paso, permitiendo a modelos con pensamiento profundo (*thinking models*) razonar sin prisas ni riesgo de cancelaciones abruptas.
+- **Sin Cortes Forzados de Tiempo:** Se eliminaron los límites arbitrarios tradicionales (como el timeout fijo de 300s). El agente puede trabajar de forma autónoma durante 10, 20 o más de 30 minutos si la tarea lo requiere (ej. refactorizaciones complejas de más de 300 pasos).
+- **Idle Watchdog Dinámico (`STEP_IDLE_TIMEOUT` = 600s):** El temporizador de inactividad se reinicia continuamente a cero con cada cambio de paso, lectura de archivo o escritura en el log. Dispone de 10 minutos completos de inactividad por paso, permitiendo a modelos con pensamiento profundo (*thinking models*) razonar sin prisas ni cancelaciones abruptas.
+- **Detección Proactiva de Respuesta Final:** Si el modelo ya redactó su respuesta final en el cerebro (`transcript.jsonl`) y entra en inactividad porque procesos hijos mantienen las tuberías de salida abiertas, el puente extrae automáticamente la respuesta del transcript y libera el proceso de inmediato sin esperar timeouts.
 - **Supresión de Consolas en Windows (`CREATE_NO_WINDOW`):** Todo se ejecuta en segundo plano invisible. Ni `agy` ni sus servidores MCP (`chrome-devtools-mcp`, `antigravity-mem`) abren consolas emergentes en tu pantalla.
-- **Limpieza en Árbol (`Tree-Kill`):** En caso de cancelación, se eliminan los procesos en cascada vía `taskkill /F /T` para garantizar cero procesos huérfanos.
+- **Limpieza en Árbol (`Tree-Kill`):** En caso de cancelación o timeout, se eliminan los procesos en cascada vía `taskkill /F /T` para garantizar cero procesos huérfanos.
 
-### 3. ⚡ Turbo AutoPush Mode (`/autopush`)
+### 3. 🛑 Control en Vivo y Cancelación Inmediata (`/stop`, `/cancel`)
+- **Cancelación Táctil en 1 Toque:** Mientras Antigravity trabaja, el mensaje de estado en tiempo real muestra el botón **[ 🛑 Detener / Cancelar Tarea ]**, permitiendo fulminar cualquier proceso al instante.
+- **Comandos de Emergencia:** Envía `/stop`, `/cancel`, `/detener` o `/cancelar` para abortar tareas accidentales o bucles no deseados en milisegundos.
+
+### 4. 🛡️ Guardrails de Seguridad Inviolables del Entorno
+- **Prohibido Localhost:** El agente tiene terminantemente prohibido levantar servidores web, microservicios en background o daemons en `localhost` (`node dist/main.js`, `npm run start:dev`, `redis-server`). Toda validación local es estrictamente estática (`npm run build`, `tsc --noEmit`). Todo el entorno de ejecución corre en el servidor de producción con PM2.
+- **Prohibido SRI / Fiscal sin Orden Expresa:** Prohibición estricta de emitir facturas electrónicas, notas de crédito o interactuar con webservices del SRI (incluso en pruebas) a menos que el usuario lo solicite explícitamente en su mensaje.
+
+### 5. ▶️ Reanudación Determinística Exclusiva para Emergencias (`[ ▶️ Continuar Tarea ]`)
+- **UX Libre de Confusiones:** Cuando una tarea concluye con éxito (`code == 0`), el mensaje muestra claramente `✅ Tarea Concluida con Éxito` y el botón de continuar **se oculta automáticamente**, evitando clics redundantes.
+- **Activación Exclusiva en Fallos:** Si ocurre un timeout, interrupción o caída (`code != 0`), aparece el botón **[ ▶️ Continuar Tarea ]** con un prompt determinístico anti-reinicio que obliga a la IA a revisar los archivos modificados y el avance registrado en el cerebro, impidiendo que vuelva a empezar desde cero.
+- **Comandos Directos:** También accesible mediante `/continue` y `/continuar`.
+
+### 6. ⚡ Turbo AutoPush Mode (`/autopush`)
 - **Flujo 100% Manos Libres:** Cuando está activado, en cuanto la IA termina una tarea y detecta cambios de código, redacta automáticamente el mensaje convencional formal con IA, ejecuta `git add`, `git commit` y `git push origin HEAD`.
 - **Blindaje Anti-Errores:** Si la generación del mensaje por IA tarda o falla, cuenta con un *fallback* inteligente y limpio que utiliza tu propio prompt original, evitando que mensajes de error se guarden en el historial de Git.
 
-### 4. 🚀 Vigilancia en Vivo de Despliegues CI/CD (`/ci`)
+### 7. 🚀 Vigilancia en Vivo de Despliegues CI/CD (`/ci`)
 - Consulta en tiempo real el pipeline de **GitHub Actions** (`in_progress`, `success`, `failure`).
 - **Watcher en Segundo Plano:** Pulsa `[ 👁️ Vigilar Fin de Deploy ]` y el bot te enviará una notificación con sonido a Telegram en el momento exacto en que tu web esté desplegada en producción.
 - Si la compilación falla, extrae automáticamente el fragmento de log (`--log-failed`) para depuración inmediata desde el móvil.
 
-### 5. 🔋 Watchdog Proactivo de Energía y Batería (`/battery`)
+### 8. 🔋 Watchdog Proactivo de Energía y Batería (`/battery`)
 - Conectado a la API nativa `GetSystemPowerStatus` de Windows con 0% de sobrecarga en CPU/RAM.
 - **Alerta Proactiva de Corte Eléctrico:** Si se corta la luz en tu casa/oficina o se desconecta el cargador, el bot te avisa en Telegram de inmediato con el porcentaje y autonomía restante.
 - **Alerta de Energía Restaurada:** Te confirma cuando la electricidad regresa y la laptop vuelve a estar conectada a la red eléctrica.
 
-### 6. 🌿 Gestor de Ramas Git Móvil (`/branches`)
+### 9. 🌿 Gestor de Ramas Git Móvil (`/branches`)
 - Visualiza las ramas recientes con tiempo relativo amigable (*hace 10m*, *hace 2 días*).
 - Botones táctiles interactivos `[ 🔀 Cambiar a <Rama> ]` para alternar entre ramas al vuelo.
 - Creación rápida de ramas con `/branch <nombre>` (`git checkout -b`).
 
-### 7. 🔍 Git Diff Inteligente y Rastreo de Archivos (`/diff`)
+### 10. 🔍 Git Diff Inteligente y Rastreo de Archivos (`/diff`)
 - **Detección de Archivos Nuevos:** Utiliza internamente `git add -N .` para que los archivos recién creados por la IA se listen junto a los modificados.
 - **Soporte Transparente para Turbo AutoPush:** Si AutoPush ya commiteó los cambios de la interacción, el botón no queda vacío; inspecciona automáticamente el último commit (`git show --stat HEAD` y `git show -p HEAD`) mostrando los archivos cambiados y el bloque de código `diff`.
 - **Rastreo de Archivos por Sesión:** Extrae directamente de `transcript.jsonl` la lista de archivos que Antigravity ha manipulado con herramientas de edición en la sesión activa.
 
-### 8. 📸 Diagnóstico Multimodal por Imagen
+### 11. 📸 Diagnóstico Multimodal por Imagen
 - Envía capturas de pantalla de bugs, interfaces desalineadas o fotos a Telegram.
 - El bot las descarga en alta resolución y las analiza con la visión multimodal de Antigravity.
 
@@ -187,7 +202,8 @@ pwsh -File install_bot_service.ps1
 | `/sessions` | Lista las conversaciones guardadas del proyecto activo. | `[ 📌 <Título> ]` + `[ ➕ Hilo Limpio ]` |
 | `/session <id>` | Salto directo a una sesión por su identificador UUID. | Ficha de sesión. |
 | `/exit_session` | Sale de la sesión activa y activa el *Modo Hilo Limpio*. | `[ 💬 Entrar a Sesión ]` |
-| `/continue` o `/continuar` | **Reanuda la tarea activa:** Retoma el trabajo exactamente donde quedó con prompt determinístico anti-reinicio. | `[ ▶️ Continuar Tarea ]` |
+| `/stop` o `/cancel` | **Detención de emergencia:** Cancela y mata de inmediato cualquier tarea o subproceso de Antigravity en ejecución. | `[ 🛑 Detener / Cancelar Tarea ]` |
+| `/continue` o `/continuar` | **Reanuda la tarea interrumpida:** Retoma el trabajo exactamente donde quedó con prompt determinístico (solo disponible ante timeouts o interrupciones). | `[ ▶️ Continuar Tarea ]` *(solo en caídas)* |
 | `/plan [tarea]` | **Atajo:** Genera plan de arquitectura formal o muestra el `implementation_plan.md` actual. | `[ ▶️ Ejecutar Plan ]` |
 | `/mode` o `/modos` | Alterna modo de ejecución: ⚡ Directo (`accept-edits`) vs 🧠 Planificación (`plan`). | `[ ⚡ Directo ]`, `[ 🧠 Plan ]` |
 | `/walkthrough` | Muestra el informe de tareas y cambios implementados (`walkthrough.md`). | Documento descargable. |
@@ -216,7 +232,7 @@ pwsh -File install_bot_service.ps1
 | `ANTIGRAVITY_DEFAULT_PROJECT` | Repositorio seleccionado por defecto al arrancar. | `C:\MisProyectos\MiApp` |
 | `ANTIGRAVITY_DEFAULT_MODEL` | Modelo de IA predeterminado para el CLI. | `auto` |
 | `ANTIGRAVITY_DEFAULT_MODE` | Modo inicial de ejecución (`accept-edits` o `plan`). | `accept-edits` |
-| `ANTIGRAVITY_STEP_IDLE_TIMEOUT` | Segundos máximos de inactividad tolerados entre pasos de IA. | `360` (6 min) |
+| `ANTIGRAVITY_STEP_IDLE_TIMEOUT` | Segundos máximos de inactividad tolerados entre pasos de IA. | `600` (10 min) |
 | `ANTIGRAVITY_MAX_TASK_TIMEOUT` | Techo máximo global en segundos (`0` = deshabilitado). | `0` |
 | `ANTIGRAVITY_DEFAULT_AUTOPUSH` | Estado inicial del modo Turbo AutoPush (`true`/`false`). | `false` |
 | `ANTIGRAVITY_WATCHDOG_ENABLED` | Activar/desactivar monitor de batería y cortes de luz. | `true` |

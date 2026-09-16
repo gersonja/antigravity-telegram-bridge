@@ -131,7 +131,7 @@ DEFAULT_EXECUTION_MODE = os.environ.get("ANTIGRAVITY_DEFAULT_MODE", "accept-edit
 
 WATCHDOG_ENABLED = os.environ.get("ANTIGRAVITY_WATCHDOG_ENABLED", "true").lower() in ("true", "1", "yes")
 WATCHDOG_INTERVAL = int(os.environ.get("ANTIGRAVITY_WATCHDOG_INTERVAL", "45"))
-DEFAULT_HEALTH_URL = os.environ.get("ANTIGRAVITY_DEFAULT_HEALTH_URL", "https://google.com")
+DEFAULT_HEALTH_URL = os.environ.get("ANTIGRAVITY_DEFAULT_HEALTH_URL", "").strip()
 TASK_TIMEOUT = int(os.environ.get("ANTIGRAVITY_TASK_TIMEOUT", "300"))
 # Timeout por inactividad entre pasos: si no hay avance en este tiempo, se considera estancada
 STEP_IDLE_TIMEOUT = int(os.environ.get("ANTIGRAVITY_STEP_IDLE_TIMEOUT", "360"))
@@ -1429,7 +1429,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text += "⚡ *CI/CD & AUTOMATIZACIÓN*\n"
     help_text += "• `/autopush` - Activar/desactivar commit y push automático tras cada orden\n"
     help_text += "• `/ci` - Estado en vivo del pipeline de GitHub Actions y opción de vigilar deploy\n"
-    help_text += "• `/health [url]` - Comprobar disponibilidad HTTP, latencia (ms) y SSL en vivo\n\n"
+    help_text += "• `/health <url>` - Comprobar disponibilidad HTTP, latencia y SSL de cualquier web\n\n"
 
     help_text += "⚙️ *SISTEMA, BATERÍA & TERMINAL*\n"
     help_text += "• `/status` - Panel integral de control, métricas de memoria, batería y atajos\n"
@@ -1726,10 +1726,11 @@ def build_ci_view() -> Tuple[str, InlineKeyboardMarkup]:
         first_row.append(InlineKeyboardButton("📋 Ver Log de Error", callback_data=f"ci_logs_{run_id}"))
 
     kb.append(first_row)
-    kb.append([
-        InlineKeyboardButton("🌐 Healthcheck Web", callback_data="btn_health"),
-        InlineKeyboardButton("📊 Volver a Estado", callback_data="btn_status"),
-    ])
+    ci_bottom = []
+    if DEFAULT_HEALTH_URL:
+        ci_bottom.append(InlineKeyboardButton("🌐 Healthcheck Web", callback_data="btn_health"))
+    ci_bottom.append(InlineKeyboardButton("📊 Volver a Estado", callback_data="btn_status"))
+    kb.append(ci_bottom)
     return text, InlineKeyboardMarkup(kb)
 
 async def watch_ci_pipeline(app, chat_id: int, run_id: int):
@@ -1755,8 +1756,8 @@ async def watch_ci_pipeline(app, chat_id: int, run_id: int):
                             f"🌐 Los cambios ya se encuentran en producción.\n\n"
                             f"🔗 [Ver detalles en GitHub]({url})"
                         )
-                        kb = [[InlineKeyboardButton("🌐 Probar Healthcheck", callback_data="btn_health")]]
-                        await app.bot.send_message(chat_id=chat_id, text=msg, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
+                        deploy_kb = [[InlineKeyboardButton("🌐 Probar Healthcheck", callback_data="btn_health")]] if DEFAULT_HEALTH_URL else None
+                        await app.bot.send_message(chat_id=chat_id, text=msg, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(deploy_kb) if deploy_kb else None)
                     else:
                         msg = (
                             f"🚨 *¡FALLÓ EL PIPELINE CI/CD!*\n"
@@ -1982,17 +1983,16 @@ def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
         second_row.append(InlineKeyboardButton("✅ Commit", callback_data="approve_push"))
     keyboard.append(second_row)
 
-    # Botones Super Dev (AutoPush, CI/CD, Health)
+    # Botones Super Dev (AutoPush, CI/CD, Ramas)
     autopush_btn_text = f"⚡ AutoPush: {'ON' if state.autopush else 'OFF'}"
     keyboard.append([
         InlineKeyboardButton(autopush_btn_text, callback_data="toggle_autopush"),
         InlineKeyboardButton("🚀 CI/CD", callback_data="btn_ci"),
-        InlineKeyboardButton("🌐 Health", callback_data="btn_health"),
+        InlineKeyboardButton("🌿 Ramas", callback_data="btn_branches"),
     ])
 
-    # Gestión de Ramas y Sistema
+    # Gestión de Sistema y Refresco
     keyboard.append([
-        InlineKeyboardButton("🌿 Ramas", callback_data="btn_branches"),
         InlineKeyboardButton("🔋 Batería", callback_data="btn_battery"),
         InlineKeyboardButton("🔄 Refrescar", callback_data="btn_status"),
     ])
@@ -2456,12 +2456,23 @@ async def cmd_ci(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_reply_message(msg_target, text, reply_markup=markup)
 
 async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Comprueba disponibilidad, latencia y HTTPS de la aplicación web."""
+    """Comprueba disponibilidad, latencia y HTTPS de una aplicación web."""
     if not is_authorized(update):
         return
     msg_target = update.effective_message
     url = context.args[0].strip() if context.args else DEFAULT_HEALTH_URL
-    if not url.startswith("http"):
+    if not url:
+        await safe_reply_message(
+            msg_target,
+            "ℹ️ *Comprobación de Estado Web (`/health`)*\n\n"
+            "Indica la URL que deseas monitorear:\n"
+            "• `/health http://localhost:3000`\n"
+            "• `/health https://mi-dominio.com`\n\n"
+            "_💡 El estado de tu bot y tu laptop se verifica directamente con `/status` (si el bot te responde, tu laptop está online)._",
+        )
+        return
+
+    if not url.startswith("http://") and not url.startswith("https://"):
         url = f"https://{url}"
 
     await safe_reply_message(msg_target, f"🌐 _Comprobando disponibilidad de {url}..._")
@@ -2811,6 +2822,15 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         elif data == "btn_health":
             url = DEFAULT_HEALTH_URL
+            if not url:
+                await safe_edit_message(
+                    query,
+                    "ℹ️ *Healthcheck Web*\n\n"
+                    "No hay ninguna URL configurada por defecto.\n"
+                    "Usa `/health <url>` para comprobar una web específica (ej: `/health http://localhost:3000`).",
+                    reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📊 Volver a Estado", callback_data="btn_status")]])
+                )
+                return
             res = check_web_health(url)
             status_line = f"🟢 ONLINE (`HTTP {res['code']} OK` en {res['ms']} ms)" if res["ok"] else f"🔴 ERROR (`{res.get('error')}`)"
             text = (

@@ -136,9 +136,23 @@ A continuación, casos reales de desarrollo en movilidad comparando cómo cambia
 
 ---
 
+### Caso 5: Caso de Estudio Real en Monorepo Complejo (Angular 19/20 y Tipado Estricto)
+
+* 🟢 **Prompt Real Acotado Ejecutado con Éxito Autónomo Total (Sesión `343c1443`):**
+  > *"Compila el proyecto reports y apps/gestion para identificar posibles fallos de compilación. Corrige exclusivamente los errores de tipado estricto de Angular (como `NG8113` y `NG8107`) en `results-page.component.ts`. Verifica que landing-page compile limpiamente. Al terminar, genera el walkthrough y concluye. No levantes servidores locales."*
+
+* **Comportamiento Autónomo Logrado:**
+  1. `agy` ejecutó la compilación focalizada (`nx build reports` y `nx build gestion`).
+  2. Detectó con precisión quirúrgica los errores de tipado estricto (`NG8113` y `NG8107`) causados por desajustes entre tipos opcionales y templates.
+  3. Modificó el archivo `results-page.component.ts` aplicando las correcciones exactas.
+  4. Verificó la compilación de `landing-page` certificando que no hubo efectos secundarios.
+  5. Generó el artefacto formal `walkthrough.md` en el cerebro (`brain/`) y finalizó con código 0 sin timeouts y sin desviarse a tocar archivos ajenos.
+
+---
+
 ## 5. Patrones de Prompting Móvil para Telegram (Atajos Rápidos)
 
-Escribir en el teclado del celular en medio de la calle no debe ser una molestia. Utiliza estos tres patrones abreviados:
+Escribir en el teclado del celular en medio de la calle no debe ser una molestia. Utiliza estos patrones abreviados:
 
 ### Patrón 1: El Atajo `/plan` para Cero Riesgos
 En lugar de escribir restricciones largas, usa el comando `/plan`:
@@ -150,13 +164,19 @@ Al llevar `/plan`, el puente automáticamente activa las reglas de modo plan:
 * ✅ Diseña la solución paso a paso.
 * 🛑 **Se detiene obligatoriamente** sin tocar código y te envía el botón `[ 🧠 Ver Plan ]`.
 
-### Patrón 2: El Prefijo `[SOLO ARCHIVO]`
-Si vas a dictar o escribir rápido:
+### Patrón 2: El Desbloqueo Semántico (*Smart Approval*)
+Una vez que revises el plan en tu teléfono, no tienes que cambiar manualmente la configuración del bot. Simplemente responde:
+> *"Aprobado, comencemos"*  o envía `/approve` o toca `[ ▶️ Ejecutar Plan ]`.
+
+El puente detectará automáticamente la aprobación, conmutará a **Modo Directo (`accept-edits`)**, guardará el estado y comenzará a aplicar las modificaciones de código inmediatamente.
+
+### Patrón 3: El Prefijo `[SOLO ARCHIVO]`
+Si vas a dictar o escribir rápido en movimiento:
 ```text
 [SOLO ARCHIVO: Button.tsx] Cambia el color del botón primario a azul cobalto #1e40af y añade padding x-4. No toques ningún otro componente.
 ```
 
-### Patrón 3: La Técnica de Dos Fases (Diagnóstico $\rightarrow$ Ejecución)
+### Patrón 4: La Técnica de Dos Fases (Diagnóstico $\rightarrow$ Ejecución)
 1. **Fase 1 (Diagnóstico Móvil):**
    > *"Analiza por qué falla la exportación a Excel en `ReportsService.java`. Solo dime qué línea falla y cómo lo arreglarías. No edites nada."*
 2. **Fase 2 (Aprobación Rápida):**
@@ -196,6 +216,12 @@ Antigravity CLI inyecta automáticamente este archivo en su contexto cognitivo a
 ```
 
 Dominar el **Prompting Acotado** transforma a Antigravity de un "aprendiz entusiasta que quiere arreglarlo todo" a un **cirujano de código de alta velocidad** que resuelve tus tareas en 2 minutos mientras tú te desplazas por la ciudad.
+
+> 📚 **Otras lecturas recomendadas:**  
+> - 📖 [Manual Exhaustivo de Comandos, Botones y Flujos Operativos](Manual_Completo_Comandos_Botones_y_Flujos.md)  
+> - 📘 [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md)  
+> - 🛡️ [Guía de Gobernanza, Reglas de Proyecto y Blindaje de Código (`constitution.md`)](Guia_Gobernanza_Reglas_y_Blindaje.md)  
+> - 🔧 [Guía de Resolución de Problemas, Diagnóstico y Rescate Operativo](Guia_Resolucion_Problemas_y_Diagnostico.md)  
 
 ---
 

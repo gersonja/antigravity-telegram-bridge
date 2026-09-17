@@ -112,7 +112,23 @@ Al cambiar de proyecto en Telegram con `/projects`, **`agy` adopta instantáneam
 
 ---
 
-## 6. Verificación: ¿Cómo Saber si `agy` está Respetando las Reglas?
+## 6. Blindaje Nativo a Nivel de Infraestructura (Salvaguardas del Bridge)
+
+Además de la constitución ética inyectada en el LLM, el propio puente en Python implementa **cuatro compuertas de seguridad a nivel de sistema operativo**:
+
+1. **Doble Compuerta en Turbo AutoPush:**  
+   - *Compuerta 1:* Si la tarea concluye con código distinto de cero (`code != 0`), timeout o cancelación por el usuario, AutoPush **se aborta inmediatamente**.
+   - *Compuerta 2 (Aislamiento de Sesión):* AutoPush consulta `transcript.jsonl`. Si el agente no tocó ningún archivo de código (por ejemplo, si solo analizó arquitectura o redactó un plan), AutoPush **no toca Git**, protegiendo cualquier archivo o cambio que tú tuvieras abierto manualmente en el IDE de tu computadora.
+2. **Protocolo de Parada Forzada (`stop_task_now`):**  
+   Al enviar `/stop` o presionar `[ 🛑 Detener Tarea ]`, no solo se envía SIGTERM; se ejecuta `taskkill /F /T` sobre el árbol de procesos, se barre cualquier instancia huérfana de `agy.exe` y se fija `was_cancelled = True`, anulando de inmediato reintentos de cascada y envíos accidentales a Git.
+3. **Guardián de Modo Plan Estricto (Bloqueo de Auto-Aprobación):**  
+   Neutraliza el gancho interno del CLI (`Stop hook blocked termination: The user has automatically approved the artifact`) forzando la detención obligatoria tras entregar `implementation_plan.md`.
+4. **Smart Plan Approval:**  
+   La ejecución física de código tras una fase de diseño exige una confirmación humana explícita (*"Aprobado"*, `/approve` o botón `[ ▶️ Ejecutar Plan ]`), conmutando a modo directo de forma transparente y controlada.
+
+---
+
+## 7. Verificación: ¿Cómo Saber si `agy` está Respetando las Reglas?
 
 Cuando envíes una orden desde Telegram, puedes verificar fácilmente si el agente leyó la constitución:
 
@@ -120,6 +136,12 @@ Cuando envíes una orden desde Telegram, puedes verificar fácilmente si el agen
    `🔍 Inspeccionando: .ai/rules/constitution.md` o `Reading rule files...`.
 2. **En las respuestas:** Si le pides algo que viola una regla, `agy` te responderá respetuosamente:
    > *"He actualizado el código del XML de la factura, pero de acuerdo con el Invariante 2 de la constitución de este proyecto, no he realizado llamadas de red al SRI. He añadido un mock unitario para validar la estructura."*
+
+> 📚 **Otras lecturas recomendadas:**  
+> - 📖 [Manual Exhaustivo de Comandos, Botones y Flujos Operativos](Manual_Completo_Comandos_Botones_y_Flujos.md)  
+> - 📘 [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md)  
+> - 🎯 [Guía Maestra de Prompting Acotado para Agentes Autónomos (`agy`)](Guia_Prompts_Acotados_Agentes_Autonomos.md)  
+> - 🔧 [Guía de Resolución de Problemas, Diagnóstico y Rescate Operativo](Guia_Resolucion_Problemas_y_Diagnostico.md)  
 
 ---
 

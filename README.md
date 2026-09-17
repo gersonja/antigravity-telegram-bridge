@@ -47,58 +47,72 @@ graph TD
 
 ### 1. 🧠 Integración Completa con Google Antigravity (`agy` & IDE)
 - **Sincronización Bidireccional Total (CLI 🔄 IDE):** Ejecución unificada con el perfil nativo del Antigravity IDE (`--app_data_dir antigravity-ide`). Cada orden ejecutada desde Telegram actualiza las bases de datos SQLite oficiales (`conversation_summaries.db`) y el cerebro del agente (`transcript.jsonl`). Los chats iniciados en el IDE se pueden continuar en Telegram y viceversa, con un resolver inteligente de 4 capas que garantiza títulos descriptivos y comprensibles en todo momento.
+- **Reasignación Dinámica de Sesiones en Caliente:** Si `agy` CLI genera un nuevo identificador UUID al invocar una sesión antigua, el vigilante detecta la nueva carpeta en los primeros 3 segundos y reasigna el tracker de actividad en tiempo real, erradicando falsos estados de inactividad.
 - **Auto-Router y Multimodelo:** Selector automático inteligente (`auto`) que clasifica tareas entre Gemini 3.8 Flash Medium (ultrarrápido para UI, CSS, fixes) y Gemini 3.8 Flash High (análisis profundo y arquitectura). También soporta `claude-sonnet-4-6`, `claude-opus-4-6-thinking`, etc.
-- **Modos de Ejecución Flexibles (`/mode`):** Alterna entre **⚡ Directo (`accept-edits`)** para ejecución inmediata y **🧠 Planificación (`plan`)** para diseño previo de arquitectura.
+- **Modos de Ejecución Flexibles (`/mode`):** Alterna entre **⚡ Directo (`accept-edits`)** (Modo recomendado por defecto) para ejecución autónoma inmediata y **🧠 Planificación (`plan`)** para diseño previo de arquitectura bajo demanda.
 - **Atajo Rápido de Planificación (`/plan <tarea>`):** Escribe `/plan` seguido de tu objetivo para entrar directamente en modo plan sin cambiar la configuración global. Antigravity investiga, genera el `implementation_plan.md` y te ofrece el botón táctil **[ ▶️ Ejecutar Plan ]** para aplicarlo.
-- **Guardián de Modo Plan Estricto (Bloqueo de Auto-Aprobación):** Resuelve el problema donde `--dangerously-skip-permissions` activaba el gancho interno `Stop hook blocked termination: The user has automatically approved the artifact` auto-ejecutando tareas sin consentimiento. El puente neutraliza este comportamiento y obliga a la IA a detenerse siempre tras entregar el plan, esperando la aprobación humana en Telegram.
+- **Guardián de Modo Plan Estricto y Bloqueo de Auto-Aprobación:** Neutraliza el gancho interno del CLI (`Stop hook blocked termination: The user has automatically approved the artifact`), obligando a la IA a detenerse siempre tras entregar el plan arquitectónico, esperando la aprobación humana en Telegram.
+- **Smart Plan Approval y Comandos de Ejecución (`/approve`, `/aprobar`, `/exec`, `/ejecutar`):** Detecta intenciones en lenguaje natural (*"aprobado"*, *"comencemos"*, *"proceder"*, *"ejecuta el plan"*) o comandos dedicados. Desbloquea automáticamente el modo directo (`accept-edits`), persiste la configuración y comienza la implementación física de inmediato.
 - **Telemetría Paso a Paso en Vivo con Botón de Detención:** Telegram muestra en tiempo real qué herramienta ejecuta el agente (*"💻 Terminal: git status"*, *"📝 Editando: AppService.java"*, *"🔍 Inspeccionando código..."*), acompañando cada actualización de un botón interactivo **[ 🛑 Detener / Cancelar Tarea ]**.
 - **Gestión de Brain & Planes:** Detecta automáticamente `implementation_plan.md` y `walkthrough.md`. Puedes revisar el resumen estructurado en tu teléfono y pulsar **[ ▶️ Ejecutar Plan ]** con un solo toque.
 
-### 2. ⏱️ Motor Autónomo Guiado por Actividad (Zero Timeouts)
+### 2. 🛡️ Resiliencia Extrema: Cascada Multimodelo Automática en 4 Niveles
+- **Superación del Error 503 (Capacidad Agotada):** Ante saturación global de servidores en Google para `gemini-3.8-flash-high`, el puente no se rinde ni falla:
+  - **Nivel 1:** `gemini-3.8-flash-high` (Máximo razonamiento).
+  - **Nivel 2:** `gemini-3.8-flash-medium` (Velocidad intermedia).
+  - **Nivel 3:** `gemini-3.7-flash-high` (Ultra-rápido, 100% de disponibilidad).
+  - **Nivel 4:** `claude-sonnet-4-6` (Máxima potencia de programación de Anthropic).
+- **Notificaciones Transparentes:** Cada salto de cascada se notifica en Telegram en tiempo real (`Conmutación Automática en Cascada (X/4)`).
+
+### 3. ⏱️ Motor Autónomo Guiado por Actividad (Zero Timeouts Arbitrarios)
 - **Sin Cortes Forzados de Tiempo:** Se eliminaron los límites arbitrarios tradicionales (como el timeout fijo de 300s). El agente puede trabajar de forma autónoma durante 10, 20 o más de 30 minutos si la tarea lo requiere (ej. refactorizaciones complejas de más de 300 pasos).
 - **Idle Watchdog Dinámico (`STEP_IDLE_TIMEOUT` = 600s):** El temporizador de inactividad se reinicia continuamente a cero con cada cambio de paso, lectura de archivo o escritura en el log. Dispone de 10 minutos completos de inactividad por paso, permitiendo a modelos con pensamiento profundo (*thinking models*) razonar sin prisas ni cancelaciones abruptas.
 - **Detección Proactiva de Respuesta Final:** Si el modelo ya redactó su respuesta final en el cerebro (`transcript.jsonl`) y entra en inactividad porque procesos hijos mantienen las tuberías de salida abiertas, el puente extrae automáticamente la respuesta del transcript y libera el proceso de inmediato sin esperar timeouts.
 - **Supresión de Consolas en Windows (`CREATE_NO_WINDOW`):** Todo se ejecuta en segundo plano invisible. Ni `agy` ni sus servidores MCP (`chrome-devtools-mcp`, `antigravity-mem`) abren consolas emergentes en tu pantalla.
-- **Limpieza en Árbol (`Tree-Kill`):** En caso de cancelación o timeout, se eliminan los procesos en cascada vía `taskkill /F /T` para garantizar cero procesos huérfanos.
 
-### 3. 🛑 Control en Vivo y Cancelación Inmediata (`/stop`, `/cancel`)
+### 4. 🛑 Control en Vivo y Protocolo de Parada Forzada (`stop_task_now`)
 - **Cancelación Táctil en 1 Toque:** Mientras Antigravity trabaja, el mensaje de estado en tiempo real muestra el botón **[ 🛑 Detener / Cancelar Tarea ]**, permitiendo fulminar cualquier proceso al instante.
-- **Comandos de Emergencia:** Envía `/stop`, `/cancel`, `/detener` o `/cancelar` para abortar tareas accidentales o bucles no deseados en milisegundos.
+- **Barrido en Cascada y Eliminación de Huérfanos:** Ejecuta `kill_process_tree()` por PID y un barrido de emergencia en Windows con `taskkill /F /IM agy.exe /T` para asegurar cero procesos zombis o puertos bloqueados.
+- **Bloqueo Inviolable de Auto-Reintentos y AutoPush:** Fija `was_cancelled = True`, anulando de raíz reintentos de cascada y cancelando cualquier envío accidental de código incompleto a Git.
+- **Comandos de Emergencia:** Envía `/stop`, `/cancel`, `/detener` o `/cancelar` para abortar tareas accidentales en milisegundos.
 
-### 4. 🛡️ Arquitectura Multi-Proyecto y Aislamiento de Reglas
+### 5. 🛡️ Arquitectura Multi-Proyecto y Aislamiento de Reglas
 - **100% Agnóstico al Dominio:** El puente es un orquestador universal de infraestructura móvil que no hardcodea reglas de un negocio en particular.
 - **Carga Dinámica de Contexto:** Cada repositorio gestiona sus propias directrices de arquitectura, políticas de seguridad y restricciones de ejecución mediante sus archivos locales (`.ai/rules/`, `AGENTS.md`, `GEMINI.md`). El agente de Antigravity las lee y aplica automáticamente según el proyecto activo seleccionado.
 
-### 5. ▶️ Reanudación Determinística Exclusiva para Emergencias (`[ ▶️ Continuar Tarea ]`)
+### 6. ▶️ Reanudación Determinística Exclusiva para Emergencias (`[ ▶️ Continuar Tarea ]`)
 - **UX Libre de Confusiones:** Cuando una tarea concluye con éxito (`code == 0`), el mensaje muestra claramente `✅ Tarea Concluida con Éxito` y el botón de continuar **se oculta automáticamente**, evitando clics redundantes.
 - **Activación Exclusiva en Fallos:** Si ocurre un timeout, interrupción o caída (`code != 0`), aparece el botón **[ ▶️ Continuar Tarea ]** con un prompt determinístico anti-reinicio que obliga a la IA a revisar los archivos modificados y el avance registrado en el cerebro, impidiendo que vuelva a empezar desde cero.
 - **Comandos Directos:** También accesible mediante `/continue` y `/continuar`.
 
-### 6. ⚡ Turbo AutoPush Mode (`/autopush`)
+### 7. ⚡ Turbo AutoPush Mode con Doble Blindaje (`/autopush`)
 - **Flujo 100% Manos Libres:** Cuando está activado, en cuanto la IA termina una tarea y detecta cambios de código, redacta automáticamente el mensaje convencional formal con IA, ejecuta `git add`, `git commit` y `git push origin HEAD`.
+- **Doble Compuerta de Seguridad:**
+  1. *Compuerta de Éxito (`code == 0` y no cancelada):* Ante timeouts o cancelaciones, AutoPush se desactiva protegiendo el repositorio.
+  2. *Compuerta de Aislamiento de Sesión (`len(session_modified_files) > 0`):* Si la tarea solo generó un plan o diagnóstico sin editar código, AutoPush no toca Git, **blindando cualquier archivo que el usuario estuviera editando manualmente en el IDE visual**.
 - **Blindaje Anti-Errores:** Si la generación del mensaje por IA tarda o falla, cuenta con un *fallback* inteligente y limpio que utiliza tu propio prompt original, evitando que mensajes de error se guarden en el historial de Git.
 
-### 7. 🚀 Vigilancia en Vivo de Despliegues CI/CD (`/ci`)
+### 8. 🚀 Vigilancia en Vivo de Despliegues CI/CD (`/ci`)
 - Consulta en tiempo real el pipeline de **GitHub Actions** (`in_progress`, `success`, `failure`).
 - **Watcher en Segundo Plano:** Pulsa `[ 👁️ Vigilar Fin de Deploy ]` y el bot te enviará una notificación con sonido a Telegram en el momento exacto en que tu web esté desplegada en producción.
 - Si la compilación falla, extrae automáticamente el fragmento de log (`--log-failed`) para depuración inmediata desde el móvil.
 
-### 8. 🔋 Watchdog Proactivo de Energía y Batería (`/battery`)
+### 9. 🔋 Watchdog Proactivo de Energía y Batería (`/battery`)
 - Conectado a la API nativa `GetSystemPowerStatus` de Windows con 0% de sobrecarga en CPU/RAM.
 - **Alerta Proactiva de Corte Eléctrico:** Si se corta la luz en tu casa/oficina o se desconecta el cargador, el bot te avisa en Telegram de inmediato con el porcentaje y autonomía restante.
 - **Alerta de Energía Restaurada:** Te confirma cuando la electricidad regresa y la laptop vuelve a estar conectada a la red eléctrica.
 
-### 9. 🌿 Gestor de Ramas Git Móvil (`/branches`)
+### 10. 🌿 Gestor de Ramas Git Móvil (`/branches`)
 - Visualiza las ramas recientes con tiempo relativo amigable (*hace 10m*, *hace 2 días*).
 - Botones táctiles interactivos `[ 🔀 Cambiar a <Rama> ]` para alternar entre ramas al vuelo.
 - Creación rápida de ramas con `/branch <nombre>` (`git checkout -b`).
 
-### 10. 🔍 Git Diff Inteligente y Rastreo de Archivos (`/diff`)
+### 11. 🔍 Git Diff Inteligente y Rastreo de Archivos (`/diff`)
 - **Detección de Archivos Nuevos:** Utiliza internamente `git add -N .` para que los archivos recién creados por la IA se listen junto a los modificados.
 - **Soporte Transparente para Turbo AutoPush:** Si AutoPush ya commiteó los cambios de la interacción, el botón no queda vacío; inspecciona automáticamente el último commit (`git show --stat HEAD` y `git show -p HEAD`) mostrando los archivos cambiados y el bloque de código `diff`.
 - **Rastreo de Archivos por Sesión:** Extrae directamente de `transcript.jsonl` la lista de archivos que Antigravity ha manipulado con herramientas de edición en la sesión activa.
 
-### 11. 📸 Diagnóstico Multimodal por Imagen
+### 12. 📸 Diagnóstico Multimodal por Imagen
 - Envía capturas de pantalla de bugs, interfaces desalineadas o fotos a Telegram.
 - El bot las descarga en alta resolución y las analiza con la visión multimodal de Antigravity.
 
@@ -198,6 +212,7 @@ pwsh -File install_bot_service.ps1
 * **Telegram Bridge (`agy` CLI Autónomo):** Invocado con `--dangerously-skip-permissions` para posibilitar la movilidad remota desatendida desde el móvil. Opera por **misiones completas por lote** (*Goal-Driven*). Si el agente detecta un fallo o una prueba fallida, entra en un bucle recursivo de auto-corrección (*Self-Healing Loop*), modificando archivos, buscando dependencias y probando hasta certificar la tarea completa. Una sola interacción en Telegram equivale a 20 o 30 micro-turnos interactivos del IDE ejecutados sin intervención humana mientras viajas o caminas.
 
 > 📚 **Biblioteca de Guías Técnicas Especializadas:**  
+> - 📖 [Manual Exhaustivo de Comandos, Botones y Flujos Operativos](Manual_Completo_Comandos_Botones_y_Flujos.md) *(Referencia técnica al 100% de los 37 comandos/alias, callbacks de botones y diagramas de flujo)*  
 > - 📘 [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md) *(Diferencias de ejecución, tiempos, 1000s vs 2m, y los 6 superpoderes del bot)*  
 > - 🎯 [Guía Maestra de Prompting Acotado para Agentes Autónomos (`agy`)](Guia_Prompts_Acotados_Agentes_Autonomos.md) *(Anatomía de 4 pilares y cheat-sheet de directivas negativas para reducir tareas de 1000s a 90s)*  
 > - 🛡️ [Guía de Gobernanza, Reglas de Proyecto y Blindaje de Código (`constitution.md`)](Guia_Gobernanza_Reglas_y_Blindaje.md) *(Plantilla de invariantes no negociables para blindar bases de datos, APIs externas y localhost)*  
@@ -216,24 +231,26 @@ pwsh -File install_bot_service.ps1
 | `/exit_project` | Desvincula el proyecto actual para volver al selector. | Lista de proyectos. |
 | `/sessions` | Lista las conversaciones guardadas del proyecto activo. | `[ 📌 <Título> ]` + `[ ➕ Hilo Limpio ]` |
 | `/session <id>` | Salto directo a una sesión por su identificador UUID. | Ficha de sesión. |
-| `/exit_session` | Sale de la sesión activa y activa el *Modo Hilo Limpio*. | `[ 💬 Entrar a Sesión ]` |
-| `/stop` o `/cancel` | **Detención de emergencia:** Cancela y mata de inmediato cualquier tarea o subproceso de Antigravity en ejecución. | `[ 🛑 Detener / Cancelar Tarea ]` |
-| `/continue` o `/continuar` | **Reanuda la tarea interrumpida:** Retoma el trabajo exactamente donde quedó con prompt determinístico (solo disponible ante timeouts o interrupciones). | `[ ▶️ Continuar Tarea ]` *(solo en caídas)* |
-| `/plan [tarea]` | **Atajo:** Genera plan de arquitectura formal o muestra el `implementation_plan.md` actual. | `[ ▶️ Ejecutar Plan ]` |
-| `/mode` o `/modos` | Alterna modo de ejecución: ⚡ Directo (`accept-edits`) vs 🧠 Planificación (`plan`). | `[ ⚡ Directo ]`, `[ 🧠 Plan ]` |
+| `/exit_session` o `/new` | Sale de la sesión activa y activa el *Modo Hilo Limpio*. | `[ 💬 Entrar a Sesión ]` |
+| `/stop` o `/cancel` | **Detención forzada inmediata:** Mata de inmediato el subproceso, hace barrido de huérfanos y bloquea AutoPush/reintentos. | `[ 🛑 Detener / Cancelar Tarea ]` |
+| `/continue` o `/continuar` | **Reanuda la tarea interrumpida:** Retoma el trabajo exactamente donde quedó con prompt determinístico (solo disponible ante caídas/timeouts). | `[ ▶️ Continuar Tarea ]` *(solo en fallos)* |
+| `/plan [tarea]` | **Atajo:** Genera plan de arquitectura formal bajo demanda o muestra el `implementation_plan.md` actual. | `[ ▶️ Ejecutar Plan ]` |
+| `/approve`, `/aprobar`, `/exec`, `/ejecutar` | **Aprueba y ejecuta:** Desbloquea automáticamente el modo directo y comienza a aplicar el plan de arquitectura. | Ejecución inmediata. |
+| `/mode` o `/modos` | Alterna modo de ejecución: ⚡ Directo (`accept-edits` - Predeterminado) vs 🧠 Planificación (`plan`). | `[ ⚡ Directo ]`, `[ 🧠 Plan ]` |
 | `/walkthrough` | Muestra el informe de tareas y cambios implementados (`walkthrough.md`). | Documento descargable. |
-| `/diff` | Muestra el diff de cambios no commiteados con color sintáctico. | `[ ✅ Commit ]`, `[ 🗑️ Revertir ]` |
-| `/commit [msg]` | Realiza commit y push. Si omites el mensaje, la IA lo genera. | Botón vigilar CI/CD. |
-| `/autopush` | Alterna modo Turbo AutoPush (commit & push automático tras cambios). | `[ ⚡ AutoPush: ON/OFF ]` |
+| `/diff` | Muestra el diff de cambios no commiteados (o último commit si AutoPush actuó). | `[ ✅ Commit ]`, `[ 🗑️ Revertir ]` |
+| `/commit [msg]` | Realiza commit y push. Si omites el mensaje, la IA lo redacta. | Botón vigilar CI/CD. |
+| `/autopush` | Alterna modo Turbo AutoPush con doble guardián anti-commits accidentales. | `[ ⚡ AutoPush: ON/OFF ]` |
 | `/ci` o `/cicd` | Estado en tiempo real del pipeline de GitHub Actions. | `[ 👁️ Vigilar Fin de Deploy ]` |
 | `/health [url]` | Mide disponibilidad HTTP (200 OK), latencia (ms) y SSL en vivo. | `[ 🔄 Probar de nuevo ]` |
 | `/battery` | Nivel de batería, fuente (AC/Batería) y estimación de autonomía. | `[ 🔄 Refrescar ]` |
-| `/branches` | Muestra las ramas locales recientes ordenadas por actividad. | `[ 🔀 Cambiar a <Rama> ]` |
+| `/branches` o `/ramas` | Muestra las ramas locales recientes ordenadas por actividad. | `[ 🔀 Cambiar a <Rama> ]` |
 | `/branch <nom>` | Cambia a la rama indicada o crea una nueva si no existe. | Confirmación de rama. |
 | `/revert` | Descarta modificaciones locales (`git restore . && git clean -fd`). | Confirmación de seguridad. |
-| `/models` | Selector de modelo de IA (Auto-Router, Gemini Flash, Claude, etc.). | Botones de modelos. |
+| `/models` | Selector de modelo de IA (Auto-Router, Gemini 3.8 Flash, Claude Sonnet, etc.). | Botones de modelos. |
 | `/cmd <cmd>` | Terminal remota para ejecutar cualquier orden (`npm test`, `dir`). | Salida de consola. |
-| 📸 *(Foto)* | Envía una captura de pantalla con texto para análisis visual. | Respuesta multimodal. |
+| 💬 *(Texto directo)* | Prompt de desarrollo. Conmuta automáticamente a directo si dices *"Aprobado"* o *"Comencemos"*. | Progreso en vivo + Stop. |
+| 📸 *(Foto)* | Envía una captura de pantalla con texto para análisis visual multimodal. | Respuesta multimodal. |
 
 ---
 

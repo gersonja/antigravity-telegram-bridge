@@ -136,6 +136,7 @@ Para gobernar esta autonomía sin recortar su inteligencia:
 4. **Cancelación Inmediata:** Si ves que el agente se desvía, utiliza el botón `[ 🛑 Detener Tarea ]` o envía `/stop`.
 
 > 📘 **Lecturas recomendadas:**  
+> - 👉 [Manual Exhaustivo de Comandos, Botones y Flujos Operativos](Manual_Completo_Comandos_Botones_y_Flujos.md) *(Referencia técnica al 100% de los 37 comandos/alias y callbacks de botones)*  
 > - 👉 [Guía de Paradigmas y DX: Antigravity IDE vs. agy CLI Autónomo](Guia_DX_IDE_vs_CLI_Autonomia.md)  
 > - 👉 [Guía Maestra de Prompting Acotado para Agentes Autónomos (`agy`)](Guia_Prompts_Acotados_Agentes_Autonomos.md)  
 > - 👉 [Guía de Gobernanza, Reglas de Proyecto y Blindaje de Código (`constitution.md`)](Guia_Gobernanza_Reglas_y_Blindaje.md)  
@@ -151,47 +152,62 @@ El bot está diseñado para operarse al 95% mediante botones en pantalla, minimi
 |---|---|---|
 | `/start` | Mensaje de bienvenida y comprobación de whitelist. | Botones de inicio rápido. |
 | `/?` o `/help` | Ayuda contextual según el estado (proyecto, sesión o hilo limpio). | Menú completo de comandos. |
-| `/projects` | Lista los repositorios Git encontrados en el equipo y permite seleccionarlos. | Botones táctiles `[ Abrir <Proyecto> ]`. |
-| `/exit_project` | Desvincula el proyecto activo para cambiar de repositorio. | Lista de proyectos disponibles. |
-| `/sessions` | Lista las sesiones guardadas pertenecientes al proyecto actual. | Botones táctiles `[ 📌 <Título> ]` + `[ ➕ Hilo Limpio ]`. |
-| `/session <id>` | Salto directo a una sesión por su identificador único. | Carga la ficha de la sesión. |
-| `/exit_session` | Sale de la sesión activa y entra en *Modo Hilo Limpio*. | `[ 💬 Entrar a Sesión ]`, `[ 📁 Proyectos ]`. |
-| `/status` | Ficha en vivo de RAM libre, batería/AC, AutoPush, proyecto, sesión activa, git y botones. | `[ 🧠 Ver Plan ]`, `[ ⚡ AutoPush ]`, `[ 🚀 CI/CD ]`, `[ 🌐 Health ]`, `[ 🌿 Ramas ]`, `[ 🔋 Batería ]`. |
+| `/projects` o `/switch_project` | Lista los repositorios Git encontrados en el equipo y permite seleccionarlos. | Botones táctiles `[ Abrir <Proyecto> ]`. |
+| `/exit_project` o `/close_project` | Desvincula el proyecto activo para cambiar de repositorio. | Lista de proyectos disponibles. |
+| `/sessions` o `/switch_session` | Lista las sesiones guardadas pertenecientes al proyecto actual. | Botones táctiles `[ 📌 <Título> ]` + `[ ➕ Hilo Limpio ]`. |
+| `/session <id>` | Salto directo a una sesión por su identificador único UUID. | Carga la ficha de la sesión. |
+| `/exit_session`, `/leave` o `/new` | Sale de la sesión activa y entra en *Modo Hilo Limpio*. | `[ 💬 Entrar a Sesión ]`, `[ 📁 Proyectos ]`. |
+| `/status` | Ficha en vivo de RAM libre, batería/AC, AutoPush, proyecto, sesión activa, git y botones. | Todos los atajos contextuales. |
+| `/stop`, `/cancel`, `/detener`, `/cancelar` | **Detención Forzada Inmediata:** Mata árbol de procesos, elimina huérfanos con `taskkill /F /IM agy.exe /T` y bloquea AutoPush. | `[ 🛑 Detener / Cancelar Tarea ]` |
+| `/continue` o `/continuar` | **Reanuda la tarea interrumpida:** Retoma el trabajo exactamente donde quedó con prompt determinístico (solo en caídas). | `[ ▶️ Continuar Tarea ]` *(solo en fallos)* |
 | `/plan [tarea]` | **Atajo Rápido:** Genera un plan de arquitectura formal para la tarea o muestra el `implementation_plan.md` activo. | `[ ▶️ Ejecutar Plan ]`, `[ 🔍 Ver Diff ]`. |
-| `/mode` o `/modos` | Alterna modo de ejecución: ⚡ Directo (`accept-edits`) vs 🧠 Planificación (`plan`). | `[ ⚡ Directo ]`, `[ 🧠 Plan ]`. |
+| `/approve`, `/aprobar`, `/exec`, `/ejecutar` | **Aprueba y Ejecuta:** Conmuta automáticamente el bot a modo directo (`accept-edits`) y arranca la ejecución del plan. | Ejecución inmediata. |
+| `/mode` o `/modos` | Alterna modo de ejecución: ⚡ Directo (`accept-edits` - Predeterminado) vs 🧠 Planificación (`plan`). | `[ ⚡ Directo ]`, `[ 🧠 Plan ]`. |
 | `/walkthrough` | Muestra el informe de tareas finalizadas (`walkthrough.md`). | Documento descargable si es extenso. |
-| `/diff` | Muestra los cambios de código no commiteados con formato de color diff. | `[ ✅ Commit & Push ]`, `[ 🗑️ Revertir Cambios ]`. |
+| `/diff` | Muestra los cambios de código no commiteados con formato de color diff (o último commit si AutoPush actuó). | `[ ✅ Commit & Push ]`, `[ 🗑️ Revertir Cambios ]`. |
 | `/commit [msg]` | Realiza commit y push. Si omites el mensaje, la IA genera uno convencional. | Notificación con hash, rama remota y botón para vigilar CI/CD. |
-| `/autopush` | Alterna modo Turbo AutoPush (commit & push automático tras cada orden con cambios). | `[ ⚡ AutoPush: ON/OFF ]` en `/status`. |
+| `/autopush` | Alterna modo Turbo AutoPush con doble guardián de seguridad anti-commits accidentales. | `[ ⚡ AutoPush: ON/OFF ]` en `/status`. |
 | `/ci` o `/cicd` | Estado en tiempo real del pipeline de GitHub Actions del proyecto. | `[ 🔄 Refrescar ]`, `[ 👁️ Vigilar Fin de Deploy ]`, `[ 📋 Ver Log de Error ]`. |
-| `/health [url]` | Comprueba código HTTP (200 OK), latencia de red (ms) y SSL de la web en vivo. | `[ 🔄 Probar de nuevo ]`, `[ 🚀 Ver CI/CD ]`. |
-| `/battery` | Nivel de batería, fuente (AC/Batería) y estimación de autonomía restante. | `[ 🔄 Refrescar ]`, `[ 📊 Ver Estado ]`. |
-| `/branches` | Muestra las ramas Git locales recientes con botones táctiles para alternar. | Botones `[ 🔀 Cambiar a <Rama> ]`. |
-| `/branch <nombre>` | Cambia a la rama indicada o la crea si no existe (`git checkout -b`). | Confirmación inmediata de rama activa. |
+| `/health [url]` o `/ping` | Comprueba código HTTP (200 OK), latencia de red (ms) y SSL de la web en vivo. | `[ 🔄 Probar de nuevo ]`, `[ 🚀 Ver CI/CD ]`. |
+| `/battery`, `/power` o `/bateria` | Nivel de batería, fuente (AC/Batería) y estimación de autonomía restante. | `[ 🔄 Refrescar ]`, `[ 📊 Ver Estado ]`. |
+| `/branches` o `/ramas` | Muestra las ramas Git locales recientes con botones táctiles para alternar. | Botones `[ 🔀 Cambiar a <Rama> ]`. |
+| `/branch <nombre>` o `/rama` | Cambia a la rama indicada o la crea si no existe (`git checkout -b`). | Confirmación inmediata de rama activa. |
 | `/revert` | Descarta modificaciones locales (`git restore . && git clean -fd`). | Diálogo de confirmación de seguridad. |
-| `/models` | Alterna entre modelos de IA (Auto-Router, Gemini 3.8 Flash, Claude 3.7 Sonnet, etc.). | Botones de selección de modelo. |
+| `/models` | Alterna entre modelos de IA (Auto-Router, Gemini 3.8 Flash, Claude Sonnet, etc.). | Botones de selección de modelo. |
 | `/cmd <comando>` | Terminal remota para ejecutar cualquier orden (`mvnw test`, `npm run build`). | Envío inteligente con salida capturada. |
+| 💬 *(Prompt Directo)* | Orden de desarrollo. Se desbloquea a directo si dices *"Aprobado"*, *"Comencemos"*, etc. | Telemetría en vivo + Stop. |
 | 📸 *(Foto / Captura)* | Envía una captura de pantalla de un bug o diseño con texto explicativo. | Análisis multimodal inmediato de Antigravity. |
 
 ---
 
 ## 8. Módulos Avanzados de Automatización y Telemetría
 
-### 🧠 Modos de Ejecución y Atajo de Planificación (`/mode` y `/plan <tarea>`)
+### 🧠 Modos de Ejecución y Atajo de Planificación (`/mode`, `/plan` y `/approve`)
 Antigravity soporta dos modos de ejecución:
-1. **⚡ Directo (`accept-edits` - Predeterminado):**
-   - El agente investiga, edita archivos, ejecuta comandos y aplica los cambios inmediatamente.
-   - **Consumo de tokens:** Mínimo para tareas puntuales (arreglar un bug, cambiar estilos CSS, un commit, etc.). Ideal para el trabajo diario rápido.
-2. **🧠 Planificación (`plan`):**
+1. **⚡ Directo (`accept-edits` - Predeterminado y Recomendado):**
+   - El agente investiga, edita archivos, compila, auto-repara y concluye en un solo ciclo ReAct autónomo y continuo.
+   - **Consumo de tokens:** Óptimo. Evita fragmentar el contexto entre turnos y aprovecha la autonomía natural del motor de Antigravity.
+2. **🧠 Planificación (`plan` - Para Diseño Arquitectónico Previo):**
    - El agente investiga el código a fondo, mapea dependencias, genera un `implementation_plan.md` formal en el cerebro (`~/.gemini/antigravity-ide/brain/`) y se detiene a la espera de tu aprobación sin tocar ningún archivo de código.
-   - Al terminar, Telegram te presenta el resumen con el botón interactivo **[ ▶️ Ejecutar Plan ]**.
-   - **Consumo de tokens y eficiencia:** Aunque la primera iteración genera un documento estructurado, en tareas complejas, refactorizaciones o migraciones **AHORRA tokens y tiempo a nivel global**. Evita el costoso ciclo de "ensayo y error" (donde un modelo sin plan edita archivos incorrectos, rompe tests y quema contexto tratando de autocorregirse).
+   - **Guardián de Detención Obligatoria:** Bloquea el gancho interno del CLI para impedir auto-ejecuciones no deseadas.
    - **Atajo Rápido al Vuelo:** No hace falta cambiar el modo global. Simplemente escribe `/plan <tu petición>` y el bot ejecutará esa tarea específica en modo plan de inmediato.
+3. **🚀 Smart Plan Approval y Comandos de Ejecución (`/approve`, `/aprobar`, `/exec`, `/ejecutar`):**
+   - Para erradicar el dilema donde el agente se queda atrapado en modo plan sin escribir código, el puente cuenta con un detector semántico de aprobación: si el usuario escribe *"Aprobado, comencemos"*, *"Proceder con el plan"*, *"Ejecútalo"* o envía `/approve`, el puente **conmuta automáticamente a modo directo (`accept-edits`)**, guarda el nuevo estado en `bot_state.json` y arranca la implementación física sin trabas.
 
-### ⚡ Turbo AutoPush Mode (`/autopush`)
+### 🛡️ Resiliencia Extrema: Cascada Multimodelo en 4 Niveles (`MODEL_CASCADE_CHAIN`)
+Ante saturaciones de servidores de Google (`Error 503: UNAVAILABLE` por capacidad agotada en Gemini 3.8 Flash High), el puente conmuta secuencialmente de forma automática y transparente:
+1. `gemini-3.8-flash-high` (Máximo razonamiento)
+2. `gemini-3.8-flash-medium` (Velocidad intermedia)
+3. `gemini-3.7-flash-high` (Ultra-rápido, 100% de disponibilidad)
+4. `claude-sonnet-4-6` (Máxima potencia de programación de Anthropic)
+Telegram te informa en vivo sobre cada paso de la conmutación (`Conmutación Automática en Cascada (X/4)`). Si en cualquier momento pulsas `[🛑 Detener Tarea]`, la cascada se cancela de inmediato sin saltar a más modelos.
+
+### ⚡ Turbo AutoPush Mode con Doble Blindaje (`/autopush`)
 Permite un flujo de trabajo 100% manos libres en movilidad. Cuando está activado:
 - Cada orden que genere modificaciones de código ejecuta automáticamente un commit con mensaje convencional generado por IA (`gemini-3.8-flash-high`) y lo envía a `origin HEAD`.
-- Si el repositorio está configurado con CI/CD (GitHub Actions), los cambios entran de inmediato al pipeline de pruebas y despliegue a la nube.
+- **Doble Compuerta de Seguridad:**
+  1. *Compuerta de Éxito:* Si la tarea terminó en timeout, caída o fue cancelada con `/stop`, AutoPush no commitea nada.
+  2. *Compuerta de Sesión:* Si la tarea fue puramente de análisis o plan y el agente no tocó archivos de código, AutoPush no toca Git, protegiendo cualquier archivo modificado manualmente en el IDE de escritorio.
 - Puedes activarlo o desactivarlo en cualquier momento con `/autopush` o tocando el botón `[ ⚡ AutoPush: ON/OFF ]` en `/status`.
 
 ### 🔍 Inspección Inteligente de Código y Diff Móvil (`/diff` y `[ 🔍 Ver Diff ]`)
@@ -295,6 +311,7 @@ antigravity-telegram-bridge/
 ├── .gitignore                          # Exclusión de tokens, entornos virtuales y logs
 ├── LICENSE                             # Licencia de código abierto MIT
 ├── README.md                           # Documentación principal para usuarios y desarrolladores
+├── Manual_Completo_Comandos_Botones_y_Flujos.md # Referencia técnica 100% exhaustiva de comandos y botones
 ├── Guia_Maestra_Antigravity_Mobile_Remote.md # Manual técnico integral de arquitectura
 ├── Guia_DX_IDE_vs_CLI_Autonomia.md     # Guía técnica de DX, tiempos y gobernanza de autonomía
 ├── Guia_Prompts_Acotados_Agentes_Autonomos.md # Manual práctico de prompting acotado y directivas

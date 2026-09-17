@@ -111,15 +111,21 @@ Si hay acciones que **bajo ninguna circunstancia** deba realizar por su cuenta (
 ```
 Al tener esto en su constitución, `agy` detendrá cualquier impulso de ejecutar pruebas no deseadas, ahorrando cientos de pasos y cientos de segundos.
 
-### 2. Uso Estratégico del Modo Planificación (`/mode plan` o `/plan <tarea>`)
-Para tareas de gran envergadura o arquitecturas sensibles donde no quieres que la IA empiece a modificar código de golpe:
-1. Envía desde Telegram:
-   ```text
-   /plan Diseñar la integración del módulo de facturación electrónica con certificados .p12
-   ```
-2. El puente activa el modo plan estricto: `agy` investiga a fondo, inspecciona archivos, elabora `implementation_plan.md` y **se detiene obligatoriamente**.
-3. En tu teléfono recibes el resumen y el botón **`[ 🧠 Ver Plan ]`**.
-4. Lo revisas tranquilamente desde el móvil y, solo cuando estés de acuerdo con su enfoque, pulsas **`[ ▶️ Ejecutar Plan ]`**.
+### 2. El Modo Directo como Estándar Dorado vs. El Antipatrón del Modo Plan Persistente
+Uno de los descubrimientos arquitectónicos y operativos más relevantes de este puente es la relación entre el **Modo de Ejecución** y la naturaleza del agente:
+
+* **En el IDE visual:** El "modo plan" es cómodo porque tú estás mirando la pantalla y apruebas cada paso interactivamente.
+* **En el CLI autónomo (`agy`):** El **modo plan persistente es un antipatrón**. ¿Por qué?
+  1. **Castración del Bucle ReAct:** La mayor fortaleza de `agy` es su capacidad autónoma de razonar, editar código, ejecutar la consola, leer el error del compilador y auto-reparar el código en una sola misión ininterrumpida. Si activas `plan` permanentemente, le atas las manos: el agente recibe instrucciones del sistema que le prohíben modificar archivos.
+  2. **Dilema Cognitivo en Aprobación:** Cuando el usuario revisa el plan en Telegram y responde *"Aprobado, comencemos"*, si el bot sigue en modo plan, `agy` sufre un conflicto insalvable: el usuario le pide ejecutar, pero el sistema le prohíbe editar archivos.
+  3. **Evidencia Empírica de Laboratorio:**
+     - **Sesión `a265cdd3` (Bloqueada por Modo Plan Persistente):** El usuario aprobó el plan diciendo *"Comencemos"*, pero la persistencia del modo plan impidió a `agy` escribir código, devolviendo respuestas descriptivas sin tocar el repositorio y sin ejecutar commit alguno.
+     - **Sesión `343c1443` (Éxito Autónomo en Modo Directo):** Con el bot en **Modo Directo (`accept-edits`)** y un prompt acotado, `agy` ejecutó autónomamente la misión: compiló módulos de reportes y gestión en un monorepo complejo, detectó y reparó errores de tipado estricto en Angular 19/20 (`NG8113`/`NG8107`), corrigió `results-page.component.ts`, verificó `landing-page` y redactó el informe final `walkthrough.md` en un solo ciclo fluido y perfecto.
+
+#### La Solución de Ingeniería Implementada:
+1. **Modo Predeterminado Oficial:** El puente opera siempre por defecto en **`⚡ Directo (accept-edits)`**.
+2. **Planificación Quirúrgica Bajo Demanda:** Para diseñar arquitectura previa sin tocar código, usa el atajo `/plan <tarea>`. `agy` diseña el plan, genera `implementation_plan.md` y se detiene obligatoriamente.
+3. **Smart Plan Approval y Desbloqueo Automático:** Cuando estés listo para construir, pulsa **`[ ▶️ Ejecutar Plan ]`**, envía `/approve` o simplemente escribe en lenguaje natural *"Aprobado, comencemos"*. El motor de Smart Approval detecta tu intención, conmuta automáticamente a modo directo (`accept-edits`), persiste el cambio y arranca la ejecución del código sin trabas.
 
 ### 3. Delimitación de Fronteras en el Prompt Móvil (*Scope-Bounded Prompting*)
 Al redactar una orden en Telegram, aprovecha la gran comprensión del modelo para fijar sus límites operacionales mediante directivas negativas explícitas:
@@ -217,9 +223,15 @@ El bot incluye telemetría Win32 (`/battery` y Watchdog de Energía). Si hay un 
 
 1. **Entiende el valor de los 1000 segundos:** Cuando `agy` tarda 15 minutos en el bot, no está "congelado"; está haciendo el trabajo pesado que un desarrollador humano haría en media hora de investigación, refactorización y depuración autónoma.
 2. **Confía en el Idle Watchdog:** El sistema cuenta con un vigilante de inactividad de 600 segundos por paso (`STEP_IDLE_TIMEOUT`). Si el agente sigue cambiando de paso, déjalo trabajar; está resolviendo la misión.
-3. **Usa el planificador como filtro:** Usa `/plan` para pensar y diseñar; usa `/mode accept-edits` para construir.
+3. **El Modo Directo es el estándar:** Mantén el bot en `⚡ Directo (accept-edits)` para que `agy` complete su bucle ReAct de auto-reparación. Usa `/plan` exclusivamente cuando desees un documento previo de diseño.
 4. **Acota tus requerimientos:** Aplica los principios de la [Guía de Prompting Acotado](Guia_Prompts_Acotados_Agentes_Autonomos.md) para concentrar la potencia de `agy` en segundos.
 5. **Protege tu proyecto con reglas:** No hardcodees restricciones en el bot de Telegram; colócalas en las reglas de tu propio repositorio (`.ai/rules/constitution.md`) para que apliquen tanto en el bot como en el IDE.
+
+> 📚 **Otras lecturas recomendadas:**  
+> - 📖 [Manual Exhaustivo de Comandos, Botones y Flujos Operativos](Manual_Completo_Comandos_Botones_y_Flujos.md)  
+> - 🎯 [Guía Maestra de Prompting Acotado para Agentes Autónomos (`agy`)](Guia_Prompts_Acotados_Agentes_Autonomos.md)  
+> - 🛡️ [Guía de Gobernanza, Reglas de Proyecto y Blindaje de Código (`constitution.md`)](Guia_Gobernanza_Reglas_y_Blindaje.md)  
+> - 🔧 [Guía de Resolución de Problemas, Diagnóstico y Rescate Operativo](Guia_Resolucion_Problemas_y_Diagnostico.md)  
 
 ---
 

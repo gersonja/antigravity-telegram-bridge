@@ -122,7 +122,30 @@ raw_uid = os.environ.get("ANTIGRAVITY_USER_ID", "").strip()
 MY_USER_ID = int(raw_uid) if raw_uid.isdigit() else 0
 
 raw_roots = os.environ.get("ANTIGRAVITY_WORKSPACE_ROOTS", BASE_DIR)
-WORKSPACE_ROOTS = [os.path.expanduser(p.strip()) for p in re.split(r"[,;]", raw_roots) if p.strip()]
+WORKSPACE_ROOTS = [os.path.normpath(os.path.expanduser(p.strip())) for p in re.split(r"[,;]", raw_roots) if p.strip()]
+
+# Perfiles de GitHub y Git (Personal vs Trabajo / SSH)
+GITHUB_PROFILES = {
+    "personal": {
+        "id": "personal",
+        "label": "👤 Personal (gersonja - HTTPS)",
+        "name": os.environ.get("GITHUB_PERSONAL_NAME", "Gerson Javier Castellanos Niño").strip(),
+        "email": os.environ.get("GITHUB_PERSONAL_EMAIL", "gersonja@gmail.com").strip(),
+        "user": os.environ.get("GITHUB_PERSONAL_USER", "gersonja").strip(),
+        "protocol": os.environ.get("GITHUB_PERSONAL_PROTOCOL", "https").strip().lower(),
+    },
+    "work_ssh": {
+        "id": "work_ssh",
+        "label": "🏢 Trabajo / Global (gersoncastellanos - SSH)",
+        "name": os.environ.get("GITHUB_WORK_NAME", "Gerson Castellanos").strip(),
+        "email": os.environ.get("GITHUB_WORK_EMAIL", "gcastellanos@szfibersystem.com").strip(),
+        "user": os.environ.get("GITHUB_WORK_USER", "gersoncastellanos").strip(),
+        "protocol": os.environ.get("GITHUB_WORK_PROTOCOL", "ssh").strip().lower(),
+    },
+}
+
+# Estado de flujos conversacionales interactivos por chat_id
+USER_FLOWS: Dict[int, Dict[str, Any]] = {}
 
 DEFAULT_PROJECT = os.environ.get("ANTIGRAVITY_DEFAULT_PROJECT", BASE_DIR)
 STATE_FILE = os.environ.get(
@@ -1829,7 +1852,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
             InlineKeyboardButton("📁 Proyectos", callback_data="btn_projects"),
+            InlineKeyboardButton("➕ Nuevo Proyecto", callback_data="btn_new_project"),
+        ],
+        [
             InlineKeyboardButton("💬 Sesiones", callback_data="btn_sessions"),
+            InlineKeyboardButton("🐙 GitHub", callback_data="btn_github"),
         ],
         [
             InlineKeyboardButton("🧠 Ver Plan", callback_data="view_plan"),
@@ -1870,6 +1897,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     help_text += "📁 *GESTIÓN DE PROYECTOS*\n"
     help_text += "• `/projects` - Listar y cambiar a otro repositorio\n"
+    help_text += "• `/newproject [nombre]` - Crear nuevo proyecto en una carpeta padre y activarlo\n"
     if proj_selected:
         help_text += "• `/exit_project` - Salir del proyecto activo y volver al selector\n"
     help_text += "\n"
@@ -1890,7 +1918,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text += "• `/mode` o `/modos` - Cambiar modo de ejecución (⚡ Directo vs 🧠 Planificación)\n"
     help_text += "• `/walkthrough` - Ver el informe de cambios implementados\n\n"
 
-    help_text += "🌿 *GIT, RAMAS & COMMITS*\n"
+    help_text += "🌿 *GIT, GITHUB & COMMITS*\n"
+    help_text += "• `/github` o `/gh` - Gestionar control remoto GitHub, perfiles (Personal/Trabajo) y estado\n"
+    help_text += "• `/firstcommit [mensaje]` - Realizar y verificar el primer commit & push a GitHub\n"
     help_text += "• `/diff` - Ver cambios locales sin commitear (color diff)\n"
     help_text += "• `/commit [mensaje]` - Commit & Push (mensaje IA automático si se omite)\n"
     help_text += "• `/revert` - Descartar todos los cambios locales no commiteados\n"
@@ -1913,7 +1943,11 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [
             InlineKeyboardButton("📁 Proyectos", callback_data="btn_projects"),
+            InlineKeyboardButton("➕ Nuevo Proyecto", callback_data="btn_new_project"),
+        ],
+        [
             InlineKeyboardButton("💬 Sesiones", callback_data="btn_sessions"),
+            InlineKeyboardButton("🐙 GitHub", callback_data="btn_github"),
         ],
         [
             InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status"),
@@ -1926,6 +1960,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await safe_reply_message(msg_target, help_text, reply_markup=InlineKeyboardMarkup(keyboard))
+
 
 async def cmd_exit_session(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Sale de la sesión activa y vuelve a modo limpio."""
@@ -2340,6 +2375,151 @@ async def power_watchdog_task(app):
             print(f"[Power Watchdog Error] {e}")
         await asyncio.sleep(WATCHDOG_INTERVAL)
 
+def get_git_status_details(repo_path: Optional[str] = None) -> Dict[str, Any]:
+    """Analiza en profundidad el estado Git y GitHub de un repositorio o del proyecto activo."""
+    target = repo_path or state.current_project
+    if not target or not os.path.exists(target):
+        return {
+            "is_git": False,
+            "branch": "",
+            "has_commits": False,
+            "commit_hash": None,
+            "last_commit_msg": "",
+            "has_remote": False,
+            "origin_url": None,
+            "remote_type": "none",
+            "remote_owner": "",
+            "remote_repo": "",
+            "is_pushed": False,
+            "ahead_count": 0,
+            "behind_count": 0,
+            "has_changes": False,
+            "user_name": "",
+            "user_email": "",
+            "active_profile_id": "none",
+            "status_category": "NO_GIT",
+        }
+
+    code_git, _ = run_cmd("git rev-parse --is-inside-work-tree", cwd=target)
+    if code_git != 0:
+        return {
+            "is_git": False,
+            "branch": "",
+            "has_commits": False,
+            "commit_hash": None,
+            "last_commit_msg": "",
+            "has_remote": False,
+            "origin_url": None,
+            "remote_type": "none",
+            "remote_owner": "",
+            "remote_repo": "",
+            "is_pushed": False,
+            "ahead_count": 0,
+            "behind_count": 0,
+            "has_changes": False,
+            "user_name": "",
+            "user_email": "",
+            "active_profile_id": "none",
+            "status_category": "NO_GIT",
+        }
+
+    _, branch_out = run_cmd("git branch --show-current", cwd=target)
+    branch = branch_out.strip()
+    if not branch:
+        _, head_symbolic = run_cmd("git symbolic-ref --short HEAD", cwd=target)
+        branch = head_symbolic.strip() or "main"
+
+    code_head, head_out = run_cmd("git rev-parse --verify HEAD", cwd=target)
+    has_commits = (code_head == 0)
+    commit_hash = head_out.strip()[:7] if has_commits else None
+
+    last_commit_msg = ""
+    if has_commits:
+        _, log_out = run_cmd('git log -1 --format="%s"', cwd=target)
+        last_commit_msg = log_out.strip()
+
+    code_remote, remote_out = run_cmd("git remote -v", cwd=target)
+    remotes = {}
+    for line in remote_out.splitlines():
+        parts = line.split()
+        if len(parts) >= 2:
+            remotes[parts[0]] = parts[1]
+    origin_url = remotes.get("origin")
+    has_remote = bool(origin_url)
+
+    remote_type = "none"
+    remote_owner = ""
+    remote_repo = ""
+    if origin_url:
+        if origin_url.startswith("git@") or "ssh://" in origin_url:
+            remote_type = "ssh"
+        else:
+            remote_type = "https"
+        match = re.search(r"[:/]([^/]+)/([^/]+?)(?:\.git)?$", origin_url)
+        if match:
+            remote_owner = match.group(1)
+            remote_repo = match.group(2)
+
+    is_pushed = False
+    ahead_count = 0
+    behind_count = 0
+    if has_commits and has_remote:
+        code_rev, _ = run_cmd(f"git rev-parse --verify origin/{branch}", cwd=target)
+        if code_rev == 0:
+            code_counts, counts_out = run_cmd(f"git rev-list --left-right --count HEAD...origin/{branch}", cwd=target)
+            if code_counts == 0 and counts_out.strip():
+                parts = counts_out.split()
+                if len(parts) == 2:
+                    ahead_count = int(parts[0]) if parts[0].isdigit() else 0
+                    behind_count = int(parts[1]) if parts[1].isdigit() else 0
+            is_pushed = (ahead_count == 0)
+        else:
+            is_pushed = False
+
+    _, diff_stat = run_cmd("git status --short", cwd=target)
+    has_changes = bool(diff_stat.strip())
+
+    _, user_name = run_cmd("git config user.name", cwd=target)
+    _, user_email = run_cmd("git config user.email", cwd=target)
+    u_name = user_name.strip()
+    u_email = user_email.strip()
+
+    active_profile_id = "custom"
+    if "gersonja@gmail.com" in u_email.lower():
+        active_profile_id = "personal"
+    elif "gcastellanos@szfibersystem.com" in u_email.lower():
+        active_profile_id = "work_ssh"
+
+    if not has_commits:
+        status_category = "NO_COMMITS"
+    elif not has_remote:
+        status_category = "LOCAL_ONLY"
+    elif not is_pushed:
+        status_category = "COMMITTED_NOT_PUSHED" if ahead_count > 0 else "BEHIND"
+    else:
+        status_category = "SYNCED"
+
+    return {
+        "is_git": True,
+        "branch": branch,
+        "has_commits": has_commits,
+        "commit_hash": commit_hash,
+        "last_commit_msg": last_commit_msg,
+        "has_remote": has_remote,
+        "origin_url": origin_url,
+        "remote_type": remote_type,
+        "remote_owner": remote_owner,
+        "remote_repo": remote_repo,
+        "is_pushed": is_pushed,
+        "ahead_count": ahead_count,
+        "behind_count": behind_count,
+        "has_changes": has_changes,
+        "user_name": u_name,
+        "user_email": u_email,
+        "active_profile_id": active_profile_id,
+        "status_category": status_category,
+    }
+
 def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
     """Construye la ficha enriquecida de estado del sistema, proyecto, sesión activa, última interacción y botones."""
     proj_name = sanitize_telegram_markdown(os.path.basename(os.path.normpath(state.current_project)) if state.current_project else "Sin Proyecto")
@@ -2374,11 +2554,43 @@ def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
         walk_path = find_brain_artifact(active_sid, "walkthrough.md")
         has_walkthrough = bool(walk_path and os.path.exists(walk_path))
 
-    # Git status
-    _, git_branch = run_cmd("git rev-parse --abbrev-ref HEAD")
-    _, git_log = run_cmd('git log -1 --format="%h - %s"')
-    _, git_stat = run_cmd("git status --short")
-    has_git_changes = bool(git_stat.strip())
+    # Diagnóstico Git y GitHub
+    git_info = get_git_status_details()
+    if git_info["is_git"]:
+        branch_str = git_info["branch"]
+        if not git_info["has_commits"]:
+            git_line = f"`{branch_str}` _(🟡 Sin commits aún - Listo para primer commit)_"
+        else:
+            c_hash = git_info["commit_hash"] or ""
+            c_msg = git_info["last_commit_msg"][:30]
+            git_line = f"`{branch_str}` (`{c_hash} - {c_msg}`)"
+    else:
+        git_line = "`No es repositorio git`"
+
+    has_git_changes = git_info.get("has_changes", False)
+    changes_line = "Directorio limpio" if not has_git_changes else f"{len(run_cmd('git status --short')[1].strip().splitlines())} archivo(s) modificado(s)"
+
+    # Estado del remote y primer commit
+    if git_info.get("has_remote"):
+        proto = f"({git_info['remote_type'].upper()})"
+        remote_line = f"`{git_info['origin_url']}` {proto}"
+    else:
+        remote_line = "`⚠️ Sin remote configurado (Usa /github)`"
+
+    sync_status = ""
+    status_cat = git_info.get("status_category")
+    if status_cat == "NO_COMMITS":
+        sync_status = "🟡 Pendiente de Primer Commit"
+    elif status_cat == "LOCAL_ONLY":
+        sync_status = "🟠 Commits solo locales (sin GitHub)"
+    elif status_cat == "COMMITTED_NOT_PUSHED":
+        sync_status = f"🟠 Pendiente de Push ({git_info.get('ahead_count', 1)} commit(s))"
+    elif status_cat == "SYNCED":
+        sync_status = "🟢 Sincronizado con GitHub"
+    elif status_cat == "BEHIND":
+        sync_status = "🔵 Desactualizado respecto a origin"
+    else:
+        sync_status = "⚪ Sin control remoto"
 
     mem_str = get_windows_memory_status()
 
@@ -2415,12 +2627,11 @@ def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
         short_a = sanitize_telegram_markdown(last_a[:260]) + ("..." if len(last_a) > 260 else "")
         text += f"🤖 *Última respuesta:*\n_{short_a}_\n\n"
 
-    git_line = f"`{git_branch.strip()}` (`{git_log.strip()}`)" if git_branch.strip() else "`No es repositorio git`"
-    changes_line = "Directorio limpio" if not has_git_changes else f"{len(git_stat.strip().splitlines())} archivo(s) modificado(s)"
-
     text += (
         f"──────────────────────────────\n"
         f"🌿 *Git:* {git_line}\n"
+        f"🔗 *Remote:* {remote_line}\n"
+        f"🌐 *GitHub:* `{sync_status}`\n"
         f"📊 *Cambios locales:* `{changes_line}`\n"
         f"⚡ *AutoPush:* `{autopush_str}`\n"
         f"🔋 *Batería / AC:* `{power_str}`\n"
@@ -2451,6 +2662,8 @@ def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
     second_row.append(InlineKeyboardButton("🔍 Ver Diff", callback_data="view_diff"))
     if has_git_changes:
         second_row.append(InlineKeyboardButton("✅ Commit", callback_data="approve_push"))
+    elif status_cat == "NO_COMMITS":
+        second_row.append(InlineKeyboardButton("🚀 Primer Commit", callback_data="gh_first_commit"))
     keyboard.append(second_row)
 
     # Botones Super Dev (AutoPush, CI/CD, Ramas)
@@ -2461,9 +2674,10 @@ def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
         InlineKeyboardButton("🌿 Ramas", callback_data="btn_branches"),
     ])
 
-    # Gestión de Sistema y Refresco
+    # Gestión de GitHub y Nuevo Proyecto
     keyboard.append([
-        InlineKeyboardButton("🔋 Batería", callback_data="btn_battery"),
+        InlineKeyboardButton("🐙 GitHub", callback_data="btn_github"),
+        InlineKeyboardButton("➕ Nuevo Proyecto", callback_data="btn_new_project"),
         InlineKeyboardButton("🔄 Refrescar", callback_data="btn_status"),
     ])
 
@@ -2482,6 +2696,7 @@ def build_status_view() -> Tuple[str, InlineKeyboardMarkup]:
 
     return text, InlineKeyboardMarkup(keyboard)
 
+
 async def show_status_view(update_or_query: Any):
     """Muestra o edita en vivo el panel de estado con botones interactivos."""
     text, markup = build_status_view()
@@ -2496,11 +2711,8 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await show_status_view(update)
 
-async def cmd_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_authorized(update):
-        return
-
-    msg_target = update.effective_message
+def build_projects_view() -> Tuple[str, InlineKeyboardMarkup]:
+    """Construye la lista interactiva de proyectos con opción para crear uno nuevo."""
     state.project_cache.clear()
     git_projects = []
 
@@ -2519,11 +2731,19 @@ async def cmd_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             print(f"[Projects] Error escaneando {root}: {e}")
 
-    if not git_projects:
-        await safe_reply_message(msg_target, "⚠️ No se encontraron repositorios Git en las rutas configuradas.")
-        return
-
     keyboard = []
+    # Botón principal para crear nuevo proyecto
+    keyboard.append([InlineKeyboardButton("➕ Crear Nuevo Proyecto", callback_data="btn_new_project")])
+
+    if not git_projects:
+        text = (
+            "📁 *Gestión de Proyectos Antigravity*\n\n"
+            "⚠️ No se encontraron repositorios Git en las rutas configuradas.\n"
+            "¡Puedes crear tu primer proyecto directamente usando el botón de abajo!"
+        )
+        keyboard.append([InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status")])
+        return text, InlineKeyboardMarkup(keyboard)
+
     text = "📁 *Selecciona el Proyecto para trabajar:*\n\n"
 
     for idx, (name, path) in enumerate(git_projects):
@@ -2534,7 +2754,575 @@ async def cmd_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{mark}*{name}* `({parent})`\n"
         keyboard.append([InlineKeyboardButton(f"{'👉 ' if path == state.current_project else ''}Abrir {name}", callback_data=f"proj_{key}")])
 
-    await safe_reply_message(msg_target, text, reply_markup=InlineKeyboardMarkup(keyboard))
+    keyboard.append([InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+async def cmd_projects(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_authorized(update):
+        return
+    text, markup = build_projects_view()
+    await safe_reply_message(update.effective_message, text, reply_markup=markup)
+
+def build_new_project_roots_view() -> Tuple[str, InlineKeyboardMarkup]:
+    """Construye el menú interactivo para seleccionar la carpeta raíz padre del nuevo proyecto."""
+    text = (
+        "📁 *Crear Nuevo Proyecto*\n"
+        "──────────────────────────────\n"
+        "Selecciona la carpeta padre donde se ubicará el nuevo proyecto:"
+    )
+    keyboard = []
+    for idx, root in enumerate(WORKSPACE_ROOTS):
+        keyboard.append([InlineKeyboardButton(f"📁 {root}", callback_data=f"newproj_root_{idx}")])
+    keyboard.append([InlineKeyboardButton("❌ Cancelar", callback_data="cancel_flow")])
+    return text, InlineKeyboardMarkup(keyboard)
+
+async def create_new_project(update_or_query: Any, context: ContextTypes.DEFAULT_TYPE, parent_root: str, folder_name: str):
+    """Crea la carpeta del proyecto, inicializa git, crea archivos base y lo fija como proyecto activo."""
+    chat_id = update_or_query.effective_chat.id
+    clean_name = re.sub(r'[<>:"/\\|?*]', '', folder_name).strip()
+    if not clean_name:
+        await context.bot.send_message(chat_id=chat_id, text="⚠️ Nombre de carpeta no válido. Debe contener caracteres alfanuméricos válidos.", parse_mode=constants.ParseMode.MARKDOWN)
+        return
+
+    target_path = os.path.normpath(os.path.join(parent_root, clean_name))
+    already_existed = os.path.exists(target_path)
+
+    try:
+        os.makedirs(target_path, exist_ok=True)
+    except Exception as e:
+        await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Error al crear la carpeta:\n`{e}`", parse_mode=constants.ParseMode.MARKDOWN)
+        return
+
+    # Inicializar git si no existe
+    is_new_git = False
+    if not os.path.exists(os.path.join(target_path, ".git")):
+        code, _ = run_cmd("git init -b main", cwd=target_path)
+        if code != 0:
+            run_cmd("git init", cwd=target_path)
+            run_cmd("git branch -M main", cwd=target_path)
+        is_new_git = True
+
+    # Crear .gitignore por defecto si no existe
+    gitignore_p = os.path.join(target_path, ".gitignore")
+    if not os.path.exists(gitignore_p):
+        default_ignore = (
+            "# Dependencias y módulos\n"
+            "node_modules/\n"
+            "__pycache__/\n"
+            "*.py[cod]\n"
+            ".venv/\n"
+            "venv/\n\n"
+            "# Variables de entorno y secretos\n"
+            ".env\n"
+            ".env.local\n"
+            "*.env\n\n"
+            "# Editores e IDEs\n"
+            ".vscode/\n"
+            ".idea/\n"
+            "Thumbs.db\n"
+            ".DS_Store\n\n"
+            "# Compilados y builds\n"
+            "dist/\n"
+            "build/\n"
+            "out/\n"
+        )
+        try:
+            with open(gitignore_p, "w", encoding="utf-8") as f:
+                f.write(default_ignore)
+        except Exception:
+            pass
+
+    # Crear README.md inicial si no existe
+    readme_p = os.path.join(target_path, "README.md")
+    if not os.path.exists(readme_p):
+        try:
+            with open(readme_p, "w", encoding="utf-8") as f:
+                f.write(f"# {clean_name}\n\nProyecto creado desde Antigravity Mobile Command Bridge.\n")
+        except Exception:
+            pass
+
+    # Fijar como proyecto activo e iniciar hilo limpio
+    state.current_project = target_path
+    state.active_session_id = None
+    state.active_session_title = None
+    state.save()
+
+    # Limpiar cualquier flujo pendiente del usuario
+    USER_FLOWS.pop(chat_id, None)
+
+    action_label = "creado e inicializado" if not already_existed else "detectado y abierto"
+    text = (
+        f"🎉 *¡Proyecto {action_label} con Éxito!*\n"
+        f"──────────────────────────────\n"
+        f"📁 *Nombre:* `{clean_name}`\n"
+        f"📂 *Ruta:* `{target_path}`\n"
+        f"🌿 *Git:* {'Repositorio inicializado (Rama `main`)' if is_new_git else 'Repositorio Git activo'}\n"
+        f"💬 *Sesión:* ✨ Hilo Nuevo Limpio\n"
+        f"──────────────────────────────\n"
+        f"¿Qué deseas hacer a continuación?\n"
+        f"• *🔗 Enlazar a GitHub:* Vincula este repositorio a tu cuenta personal (`gersonja`) o laboral (`gersoncastellanos`).\n"
+        f"• *🚀 Primer Commit:* Registra los archivos iniciales (`README.md`, `.gitignore`) en Git.\n"
+        f"• *💬 Comenzar a Programar:* Escribe directamente las instrucciones de lo que deseas construir."
+    )
+
+    keyboard = [
+        [
+            InlineKeyboardButton("🔗 Enlazar a GitHub", callback_data="btn_github"),
+            InlineKeyboardButton("🚀 Primer Commit", callback_data="gh_first_commit"),
+        ],
+        [
+            InlineKeyboardButton("💬 Comenzar a Programar", callback_data="start_coding"),
+            InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status"),
+        ]
+    ]
+
+    if hasattr(update_or_query, "edit_message_text"):
+        await safe_edit_message(update_or_query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+    else:
+        await safe_reply_message(update_or_query.effective_message, text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+async def cmd_new_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para crear un nuevo proyecto: /newproject [nombre]"""
+    if not is_authorized(update):
+        return
+
+    chat_id = update.effective_chat.id
+    args = context.args
+
+    if args:
+        folder_name = " ".join(args).strip()
+        if len(WORKSPACE_ROOTS) == 1:
+            await create_new_project(update, context, WORKSPACE_ROOTS[0], folder_name)
+            return
+        else:
+            USER_FLOWS[chat_id] = {
+                "flow": "NEW_PROJECT_CHOOSE_ROOT",
+                "folder_name": folder_name,
+            }
+            text = f"📁 *Crear Proyecto:* `{folder_name}`\n\nSelecciona la carpeta padre donde deseas crearlo:"
+            kb = []
+            for idx, root in enumerate(WORKSPACE_ROOTS):
+                kb.append([InlineKeyboardButton(f"📁 {root}", callback_data=f"newproj_root_{idx}")])
+            kb.append([InlineKeyboardButton("❌ Cancelar", callback_data="cancel_flow")])
+            await safe_reply_message(update.effective_message, text, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+    # Si no se pasó argumento:
+    if len(WORKSPACE_ROOTS) == 1:
+        chosen_root = WORKSPACE_ROOTS[0]
+        USER_FLOWS[chat_id] = {
+            "flow": "NEW_PROJECT_FOLDER",
+            "parent": chosen_root,
+        }
+        text = (
+            f"📁 *Crear Nuevo Proyecto en:* `{chosen_root}`\n\n"
+            f"Por favor, escribe el nombre de la carpeta para el nuevo proyecto:\n"
+            f"_(Ejemplo: `mi-nuevo-saas`, `sistema-ventas`, `backend-api`)_"
+        )
+        kb = [[InlineKeyboardButton("❌ Cancelar", callback_data="cancel_flow")]]
+        await safe_reply_message(update.effective_message, text, reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    text, markup = build_new_project_roots_view()
+    await safe_reply_message(update.effective_message, text, reply_markup=markup)
+
+def build_github_view(repo_path: Optional[str] = None) -> Tuple[str, InlineKeyboardMarkup]:
+    """Construye el panel interactivo completo de gestión y diagnóstico de GitHub y Remote."""
+    target = repo_path or state.current_project
+    proj_name = sanitize_telegram_markdown(os.path.basename(os.path.normpath(target)) if target else "Sin Proyecto")
+
+    if not target or not os.path.exists(target):
+        text = "⚠️ No hay ningún proyecto seleccionado. Selecciona uno con `/projects`."
+        kb = [[InlineKeyboardButton("📁 Ver Proyectos", callback_data="btn_projects")]]
+        return text, InlineKeyboardMarkup(kb)
+
+    details = get_git_status_details(target)
+
+    if not details["is_git"]:
+        text = (
+            f"🐙 *Gestor de GitHub & Control Remoto*\n"
+            f"──────────────────────────────\n"
+            f"📁 *Proyecto:* `{proj_name}`\n"
+            f"📂 *Ruta:* `{target}`\n\n"
+            f"⚠️ Este directorio *no es un repositorio Git*.\n"
+            f"Para enlazarlo a GitHub, primero inicializa Git en el proyecto."
+        )
+        kb = [
+            [InlineKeyboardButton("🌿 Inicializar Git en este Proyecto", callback_data="gh_init_git")],
+            [InlineKeyboardButton("📊 Volver a Estado", callback_data="btn_status")]
+        ]
+        return text, InlineKeyboardMarkup(kb)
+
+    branch = details["branch"]
+    has_remote = details["has_remote"]
+    remote_url = details["origin_url"] or "Sin remote configurado"
+    proto_badge = f"({details['remote_type'].upper()})" if details["remote_type"] != "none" else ""
+    user_name = details["user_name"] or "No configurado"
+    user_email = details["user_email"] or "No configurado"
+
+    # Identificar perfil activo
+    active_prof_label = "▫️ Personalizado / Global"
+    if "gersonja@gmail.com" in user_email.lower():
+        active_prof_label = "👤 Personal (gersonja)"
+    elif "gcastellanos@szfibersystem.com" in user_email.lower():
+        active_prof_label = "🏢 Trabajo (gersoncastellanos)"
+
+    status_cat = details["status_category"]
+    if status_cat == "NO_COMMITS":
+        commit_status_desc = "🟡 *Sin commits:* El repositorio está vacío o recién creado. Listo para hacer su *Primer Commit*."
+    elif status_cat == "LOCAL_ONLY":
+        commit_status_desc = f"🟠 *Solo local:* Hay commits en local (`{details['commit_hash']}`), pero aún no se ha enlazado a GitHub."
+    elif status_cat == "COMMITTED_NOT_PUSHED":
+        commit_status_desc = f"🟠 *Pendiente de subir:* Primer commit creado localmente (`{details['commit_hash']}`). Aún no se ha subido a GitHub."
+    elif status_cat == "SYNCED":
+        commit_status_desc = f"🟢 *Sincronizado con GitHub:* El primer commit y la rama `{branch}` están subidos y al día con `origin`."
+    elif status_cat == "AHEAD":
+        commit_status_desc = f"🔵 *Adelantado:* Tienes {details['ahead_count']} commit(s) locales pendientes de enviar a GitHub."
+    elif status_cat == "BEHIND":
+        commit_status_desc = f"🔵 *Desactualizado:* Hay {details['behind_count']} commit(s) en GitHub pendientes de descargar (`git pull`)."
+    else:
+        commit_status_desc = f"ℹ️ Estado de commits: `{status_cat}`"
+
+    text = (
+        f"🐙 *Gestión de GitHub & Git Remote*\n"
+        f"──────────────────────────────\n"
+        f"📁 *Proyecto:* `{proj_name}`\n"
+        f"🌿 *Rama actual:* `{branch}`\n"
+        f"🔗 *Remote origin:* `{remote_url}` {proto_badge}\n"
+        f"👤 *Identidad Git:* `{user_name}` <`{user_email}`>\n"
+        f"🏷️ *Perfil activo:* {active_prof_label}\n"
+        f"──────────────────────────────\n"
+        f"📦 *Estado del Repositorio & Commits:*\n"
+        f"{commit_status_desc}\n"
+    )
+
+    if details["has_changes"]:
+        text += f"\n📝 *Cambios de trabajo pendientes:* Sí (archivos modificados sin commitear)\n"
+
+    text += f"──────────────────────────────"
+
+    keyboard = []
+
+    if not has_remote:
+        keyboard.append([
+            InlineKeyboardButton("➕ Crear Repo en GitHub", callback_data="gh_choose_create_profile"),
+            InlineKeyboardButton("🔗 Enlazar Remote Existente", callback_data="gh_prompt_link_remote"),
+        ])
+        keyboard.append([
+            InlineKeyboardButton("👤 Configurar Identidad Git", callback_data="gh_switch_identity"),
+        ])
+        if status_cat == "NO_COMMITS":
+            keyboard.append([InlineKeyboardButton("🚀 Hacer Primer Commit Local", callback_data="gh_first_commit")])
+    else:
+        if status_cat == "NO_COMMITS":
+            keyboard.append([
+                InlineKeyboardButton("🚀 Hacer Primer Commit & Push", callback_data="gh_first_commit"),
+            ])
+        elif status_cat in ("COMMITTED_NOT_PUSHED", "AHEAD"):
+            keyboard.append([
+                InlineKeyboardButton("⬆️ Subir a GitHub (Push origin)", callback_data="gh_push_remote"),
+            ])
+        elif status_cat == "SYNCED":
+            keyboard.append([
+                InlineKeyboardButton("🔄 Sincronizar (Fetch)", callback_data="gh_fetch_remote"),
+                InlineKeyboardButton("🔍 Ver Diff", callback_data="view_diff"),
+            ])
+
+        keyboard.append([
+            InlineKeyboardButton("👤 Cambiar Identidad", callback_data="gh_switch_identity"),
+            InlineKeyboardButton("✏️ Cambiar Remote", callback_data="gh_prompt_link_remote"),
+        ])
+
+    keyboard.append([
+        InlineKeyboardButton("📁 Proyectos", callback_data="btn_projects"),
+        InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status"),
+    ])
+
+    return text, InlineKeyboardMarkup(keyboard)
+
+async def cmd_github(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para abrir la gestión de GitHub del proyecto activo."""
+    if not is_authorized(update):
+        return
+    text, markup = build_github_view()
+    await safe_reply_message(update.effective_message, text, reply_markup=markup)
+
+async def create_github_repo(repo_path: str, repo_name: str, profile_id: str, visibility: str = "private") -> Tuple[bool, str, Optional[str]]:
+    """Crea el repositorio en GitHub mediante gh CLI o configura el remote SSH correspondiente."""
+    prof = GITHUB_PROFILES.get(profile_id, GITHUB_PROFILES["personal"])
+    
+    # Configurar identidad local en el repo
+    run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=repo_path)
+    run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=repo_path)
+
+    owner = prof["user"]
+    clean_repo_name = re.sub(r'[^a-zA-Z0-9_.-]', '-', repo_name).strip("-")
+
+    # Intentar creación con gh repo create
+    gh_cmd = f"gh repo create {owner}/{clean_repo_name} --{visibility} --source=. --remote=origin"
+    code, out = run_cmd(gh_cmd, cwd=repo_path, timeout=60)
+
+    # Si gh repo create tuvo éxito
+    if code == 0:
+        if prof["protocol"] == "ssh":
+            ssh_url = f"git@github.com:{owner}/{clean_repo_name}.git"
+            run_cmd(f"git remote set-url origin {ssh_url}", cwd=repo_path)
+            return True, f"Repositorio creado y enlazado vía SSH (`{ssh_url}`).", ssh_url
+        else:
+            https_url = f"https://github.com/{owner}/{clean_repo_name}.git"
+            return True, f"Repositorio creado y enlazado vía HTTPS (`{https_url}`).", https_url
+
+    # Si falló porque ya existe o no se tienen permisos directos con gh
+    if "already exists" in out.lower():
+        if prof["protocol"] == "ssh":
+            target_url = f"git@github.com:{owner}/{clean_repo_name}.git"
+        else:
+            target_url = f"https://github.com/{owner}/{clean_repo_name}.git"
+        run_cmd("git remote remove origin", cwd=repo_path)
+        run_cmd(f"git remote add origin {target_url}", cwd=repo_path)
+        return True, f"El repositorio ya existía en GitHub. Se ha vinculado exitosamente como `origin` (`{target_url}`).", target_url
+
+    # Si se seleccionó perfil SSH y gh no está autenticado como ese usuario
+    if prof["protocol"] == "ssh":
+        target_url = f"git@github.com:{owner}/{clean_repo_name}.git"
+        run_cmd("git remote remove origin", cwd=repo_path)
+        run_cmd(f"git remote add origin {target_url}", cwd=repo_path)
+        return True, (
+            f"Remote SSH configurado exitosamente hacia `{target_url}` con identidad `{prof['name']}`.\n"
+            f"*(Aviso: Si aún no has creado el repo en la web de GitHub, créalo con el nombre `{clean_repo_name}`)*"
+        ), target_url
+
+    return False, f"Error al crear repositorio con GitHub CLI:\n`{out}`", None
+
+async def do_create_github_repo_flow(update_or_query: Any, context: ContextTypes.DEFAULT_TYPE, profile_id: str, visibility: str, repo_name: str):
+    """Ejecuta la creación en GitHub y presenta los resultados con botones inmediatos."""
+    target = state.current_project
+    chat_id = update_or_query.effective_chat.id
+
+    prof = GITHUB_PROFILES.get(profile_id, GITHUB_PROFILES["personal"])
+    await context.bot.send_message(chat_id=chat_id, text=f"🐙 _Creando repositorio `{prof['user']}/{repo_name}` en GitHub..._", parse_mode=constants.ParseMode.MARKDOWN)
+
+    success, msg, remote_url = await create_github_repo(target, repo_name, profile_id, visibility)
+
+    if success:
+        text = (
+            f"🎉 *¡Repositorio Enlazado con Éxito a GitHub!*\n"
+            f"──────────────────────────────\n"
+            f"📁 *Proyecto:* `{repo_name}`\n"
+            f"👤 *Perfil:* {prof['label']}\n"
+            f"🔗 *Remote origin:* `{remote_url}`\n"
+            f"🔒 *Visibilidad:* `{visibility.capitalize()}`\n\n"
+            f"📌 {msg}\n"
+            f"──────────────────────────────\n"
+            f"¿Deseas realizar el Primer Commit para subir la estructura a GitHub?"
+        )
+        kb = [
+            [InlineKeyboardButton("🚀 Hacer Primer Commit & Push", callback_data="gh_first_commit")],
+            [InlineKeyboardButton("💬 Comenzar a Programar", callback_data="start_coding")],
+            [InlineKeyboardButton("🐙 Ver Panel GitHub", callback_data="btn_github")],
+        ]
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
+    else:
+        text = f"⚠️ *No se pudo completar la creación en GitHub:*\n{msg}"
+        kb = [
+            [InlineKeyboardButton("🔄 Reintentar", callback_data="gh_choose_create_profile")],
+            [InlineKeyboardButton("🔗 Enlazar Manualmente", callback_data="gh_prompt_link_remote")],
+            [InlineKeyboardButton("🐙 Volver a GitHub", callback_data="btn_github")],
+        ]
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
+
+async def do_first_commit(update_or_query: Any, context: ContextTypes.DEFAULT_TYPE, custom_msg: str = ""):
+    """Ejecuta de forma controlada y verificada el primer commit y push a GitHub."""
+    chat_id = update_or_query.effective_chat.id
+    target = state.current_project
+    if not target or not os.path.exists(target):
+        msg = "⚠️ No hay un proyecto válido seleccionado. Usa `/projects` o `/newproject`."
+        await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=constants.ParseMode.MARKDOWN)
+        return
+
+    # Verificar si es git repo
+    code_git, _ = run_cmd("git rev-parse --is-inside-work-tree", cwd=target)
+    if code_git != 0:
+        run_cmd("git init -b main", cwd=target)
+
+    # Si la carpeta solo contiene .git o está vacía, crear README.md y .gitignore básicos
+    entries = [e for e in os.listdir(target) if e != ".git"]
+    if not entries:
+        gitignore_p = os.path.join(target, ".gitignore")
+        readme_p = os.path.join(target, "README.md")
+        proj_name = os.path.basename(os.path.normpath(target))
+        try:
+            with open(gitignore_p, "w", encoding="utf-8") as f:
+                f.write("node_modules/\n__pycache__/\n*.py[cod]\n.env\n.DS_Store\nThumbs.db\ndist/\nbuild/\n")
+            with open(readme_p, "w", encoding="utf-8") as f:
+                f.write(f"# {proj_name}\n\nProyecto inicializado mediante Antigravity Mobile Bridge.\n")
+        except Exception:
+            pass
+
+    # Asegurar rama main
+    run_cmd("git branch -M main", cwd=target)
+
+    # Añadir todos los archivos
+    run_cmd("git add -A", cwd=target)
+
+    # Comprobar si hay commits previos
+    code_head, _ = run_cmd("git rev-parse --verify HEAD", cwd=target)
+    is_initial = (code_head != 0)
+
+    # Mensaje de commit
+    commit_msg = custom_msg.strip()
+    if not commit_msg:
+        commit_msg = "feat: initial project setup" if is_initial else "feat: project update"
+
+    run_cmd(f'git commit -m "{commit_msg}"', cwd=target)
+
+    # Obtener hash del commit
+    _, commit_hash = run_cmd("git rev-parse --short HEAD", cwd=target)
+    commit_hash_clean = commit_hash.strip()
+
+    # Comprobar si existe remote origin
+    _, remote_v = run_cmd("git remote -v", cwd=target)
+    has_remote = "origin" in remote_v
+
+    if not has_remote:
+        text = (
+            f"✅ *¡Primer Commit Creado Localmente!*\n"
+            f"──────────────────────────────\n"
+            f"📌 *Commit:* `{commit_msg}`\n"
+            f"🔗 *Hash:* `{commit_hash_clean}` | 🌿 *Rama:* `main`\n\n"
+            f"⚠️ *Nota:* Aún no tienes configurado un repositorio remoto en GitHub.\n"
+            f"El commit está guardado con total seguridad en tu equipo local.\n\n"
+            f"¿Deseas enlazar este proyecto a GitHub ahora mismo?"
+        )
+        kb = [
+            [
+                InlineKeyboardButton("➕ Crear Repo en GitHub", callback_data="gh_choose_create_profile"),
+                InlineKeyboardButton("🔗 Enlazar Remote Existente", callback_data="gh_prompt_link_remote"),
+            ],
+            [
+                InlineKeyboardButton("💬 Comenzar a Programar", callback_data="start_coding"),
+                InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status"),
+            ]
+        ]
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    # Si hay remote, hacer push inicial con set-upstream
+    await context.bot.send_message(chat_id=chat_id, text="🚀 _Subiendo primer commit a GitHub (`git push -u origin main`)..._", parse_mode=constants.ParseMode.MARKDOWN)
+    code_p, out_p = run_cmd("git push -u origin main", cwd=target, timeout=90)
+    
+    # Extraer URL del remote
+    _, origin_url = run_cmd("git remote get-url origin", cwd=target)
+    origin_url_clean = origin_url.strip()
+
+    if code_p == 0:
+        text = (
+            f"🎉 *¡Primer Commit Creado y Subido a GitHub Exitosamente!*\n"
+            f"──────────────────────────────\n"
+            f"📌 *Commit:* `{commit_msg}`\n"
+            f"🔗 *Hash:* `{commit_hash_clean}` | 🌿 *Rama:* `main`\n"
+            f"🌐 *GitHub Remote:* `{origin_url_clean}`\n"
+            f"✅ *Estado:* Totalmente sincronizado y verificado.\n"
+            f"──────────────────────────────\n"
+            f"🚀 Tu proyecto ya está en GitHub y listo para comenzar a programar."
+        )
+        kb = [
+            [
+                InlineKeyboardButton("💬 Comenzar a Programar", callback_data="start_coding"),
+                InlineKeyboardButton("🔍 Ver Diff", callback_data="view_diff"),
+            ],
+            [
+                InlineKeyboardButton("🐙 Gestión de GitHub", callback_data="btn_github"),
+                InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status"),
+            ]
+        ]
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
+    else:
+        text = (
+            f"⚠️ *Primer Commit guardado localmente, pero falló el Push a GitHub:*\n"
+            f"──────────────────────────────\n"
+            f"📌 *Hash:* `{commit_hash_clean}`\n"
+            f"🌐 *Remote:* `{origin_url_clean}`\n"
+            f"📋 *Salida de Git:*\n```text\n{out_p[-600:] if len(out_p) > 600 else out_p}\n```\n"
+            f"💡 *Posibles causas:*\n"
+            f"• El repositorio remoto en GitHub fue creado previamente con archivos distintos (ej: README web).\n"
+            f"• Permisos o credenciales SSH/HTTPS no válidas para este repositorio.\n\n"
+            f"Puedes intentar subir de nuevo o cambiar el perfil de identidad:"
+        )
+        kb = [
+            [InlineKeyboardButton("🔄 Reintentar Push", callback_data="gh_push_remote")],
+            [InlineKeyboardButton("👤 Cambiar Identidad / SSH", callback_data="gh_switch_identity")],
+            [InlineKeyboardButton("🐙 Ver Panel GitHub", callback_data="btn_github")],
+        ]
+        await context.bot.send_message(chat_id=chat_id, text=text, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
+
+async def cmd_first_commit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando para realizar y verificar el primer commit: /firstcommit [mensaje]"""
+    if not is_authorized(update):
+        return
+    user_msg = " ".join(context.args).strip() if context.args else ""
+    await do_first_commit(update, context, custom_msg=user_msg)
+
+async def handle_flow_github_link(update: Update, context: ContextTypes.DEFAULT_TYPE, user_text: str):
+    """Procesa la entrada del usuario para enlazar un remote existente."""
+    chat_id = update.effective_chat.id
+    target = state.current_project
+    USER_FLOWS.pop(chat_id, None)
+
+    input_clean = user_text.strip()
+    if not input_clean:
+        await safe_reply_message(update.effective_message, "Operación cancelada. No se proporcionó ninguna URL.")
+        return
+
+    # Si el usuario escribió formato "owner/repo" (ej: gersonja/mi-app o Shenzhen-Fiber-System/repo)
+    if re.match(r'^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$', input_clean):
+        kb = [
+            [
+                InlineKeyboardButton("🔒 HTTPS (Personal / gersonja)", callback_data=f"gh_link_proto:{input_clean}:https"),
+                InlineKeyboardButton("🔑 SSH (Trabajo / gersoncastellanos)", callback_data=f"gh_link_proto:{input_clean}:ssh"),
+            ],
+            [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_flow")]
+        ]
+        await safe_reply_message(
+            update.effective_message,
+            f"🔗 *Enlazar Repositorio:* `{input_clean}`\n¿Qué protocolo deseas utilizar?",
+            reply_markup=InlineKeyboardMarkup(kb)
+        )
+        return
+
+    # Si es URL completa (https o git@)
+    run_cmd("git remote remove origin", cwd=target)
+    code, out = run_cmd(f"git remote add origin {input_clean}", cwd=target)
+    if code != 0:
+        await safe_reply_message(update.effective_message, f"⚠️ Error configurando remote:\n`{out}`")
+        return
+
+    # Autodetectar perfil y sugerir identidad
+    if input_clean.startswith("git@") or "ssh://" in input_clean:
+        prof = GITHUB_PROFILES["work_ssh"]
+        run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=target)
+        run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=target)
+        ident_msg = f"Identidad configurada: *{prof['label']}*."
+    else:
+        prof = GITHUB_PROFILES["personal"]
+        run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=target)
+        run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=target)
+        ident_msg = f"Identidad configurada: *{prof['label']}*."
+
+    text = (
+        f"✅ *Remote GitHub Configurado Exitosamente*\n"
+        f"──────────────────────────────\n"
+        f"🔗 *URL:* `{input_clean}`\n"
+        f"👤 {ident_msg}\n"
+        f"──────────────────────────────\n"
+        f"Puedes verificar el estado o realizar el primer commit ahora:"
+    )
+    kb = [
+        [InlineKeyboardButton("🚀 Hacer Primer Commit & Push", callback_data="gh_first_commit")],
+        [InlineKeyboardButton("🐙 Ver Panel GitHub", callback_data="btn_github")],
+        [InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status")],
+    ]
+    await safe_reply_message(update.effective_message, text, reply_markup=InlineKeyboardMarkup(kb))
 
 async def cmd_sessions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
@@ -3150,8 +3938,15 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # =============================================================================
 async def do_commit_and_push(update_or_query: Any, context: ContextTypes.DEFAULT_TYPE, custom_msg: str = ""):
     chat_id = update_or_query.effective_chat.id
+    target = state.current_project
 
-    _, diff_stat = run_cmd("git status --short")
+    # Si el repositorio no tiene commits previos, derivar directamente al flujo de primer commit
+    code_head, _ = run_cmd("git rev-parse --verify HEAD", cwd=target)
+    if code_head != 0:
+        await do_first_commit(update_or_query, context, custom_msg=custom_msg)
+        return
+
+    _, diff_stat = run_cmd("git status --short", cwd=target)
     if not diff_stat.strip():
         msg = "🌿 *No hay cambios para commitear.* El repositorio está limpio."
         await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode=constants.ParseMode.MARKDOWN)
@@ -3161,7 +3956,7 @@ async def do_commit_and_push(update_or_query: Any, context: ContextTypes.DEFAULT
     if not commit_msg:
         await context.bot.send_message(chat_id=chat_id, text="🤖 _Generando mensaje de commit con IA..._", parse_mode=constants.ParseMode.MARKDOWN)
         
-        _, quick_diff = run_cmd("git diff --stat")
+        _, quick_diff = run_cmd("git diff --stat", cwd=target)
         prompt_commit = (
             f"Genera un mensaje de commit convencional corto y preciso en español "
             f"(1 sola línea, máximo 60 caracteres, ej: 'feat(lpr): agregar validacion de placas'). "
@@ -3169,6 +3964,7 @@ async def do_commit_and_push(update_or_query: Any, context: ContextTypes.DEFAULT
         )
         code_ai, ai_msg = run_cmd(
             f'agy --model gemini-3.8-flash-high --disable-slash-commands --dangerously-skip-permissions -p "{prompt_commit}"',
+            cwd=target,
             timeout=90,
         )
         
@@ -3187,12 +3983,33 @@ async def do_commit_and_push(update_or_query: Any, context: ContextTypes.DEFAULT
         else:
             commit_msg = "feat(mobile): actualizacion desde antigravity bridge"
 
-    run_cmd("git add -A")
-    code_c, out_c = run_cmd(f'git commit -m "{commit_msg}"')
-    code_p, out_p = run_cmd("git push origin HEAD", timeout=90)
+    run_cmd("git add -A", cwd=target)
+    code_c, out_c = run_cmd(f'git commit -m "{commit_msg}"', cwd=target)
+    _, commit_hash = run_cmd("git rev-parse --short HEAD", cwd=target)
+    _, current_branch = run_cmd("git rev-parse --abbrev-ref HEAD", cwd=target)
 
-    _, commit_hash = run_cmd("git rev-parse --short HEAD")
-    _, current_branch = run_cmd("git rev-parse --abbrev-ref HEAD")
+    # Verificar si existe remote configurado
+    _, remote_v = run_cmd("git remote -v", cwd=target)
+    has_remote = "origin" in remote_v
+
+    if not has_remote:
+        result_text = (
+            f"✅ *Commit Guardado Localmente Exitosamente*\n\n"
+            f"📌 *Commit:* `{commit_msg}`\n"
+            f"🔗 *Hash:* `{commit_hash.strip()}` | 🌿 *Rama:* `{current_branch.strip()}`\n\n"
+            f"⚠️ *Aviso:* Este repositorio no tiene configurado un remote de GitHub (`origin`).\n"
+            f"El commit se encuentra guardado en tu disco local. Usa el botón de abajo para enlazarlo a GitHub."
+        )
+        kb = [
+            [InlineKeyboardButton("🔗 Enlazar a GitHub", callback_data="btn_github")],
+            [InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status")],
+        ]
+        await context.bot.send_message(chat_id=chat_id, text=result_text, parse_mode=constants.ParseMode.MARKDOWN, reply_markup=InlineKeyboardMarkup(kb))
+        return
+
+    code_p, out_p = run_cmd("git push origin HEAD", cwd=target, timeout=90)
+    if code_p != 0 and ("no upstream" in out_p.lower() or "set-upstream" in out_p.lower()):
+        code_p, out_p = run_cmd("git push -u origin HEAD", cwd=target, timeout=90)
 
     result_text = (
         f"🚀 *¡Cambios Commiteados y Enviados Exitosamente!*\n\n"
@@ -3203,6 +4020,7 @@ async def do_commit_and_push(update_or_query: Any, context: ContextTypes.DEFAULT
     )
 
     await context.bot.send_message(chat_id=chat_id, text=result_text, parse_mode=constants.ParseMode.MARKDOWN)
+
 
     # Comprobar si GitHub Actions inicia un pipeline automáticamente
     try:
@@ -3239,34 +4057,288 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # Menús y pantallas
+        # Menús y pantallas
         if data == "btn_projects":
-            state.project_cache.clear()
-            git_projects = []
-            for root in WORKSPACE_ROOTS:
-                if not os.path.exists(root):
-                    continue
-                try:
-                    if os.path.exists(os.path.join(root, ".git")):
-                        git_projects.append((os.path.basename(os.path.normpath(root)), os.path.normpath(root)))
-                        continue
-                    for d in os.listdir(root):
-                        full_p = os.path.normpath(os.path.join(root, d))
-                        if os.path.isdir(full_p) and os.path.exists(os.path.join(full_p, ".git")):
-                            git_projects.append((d, full_p))
-                except Exception:
-                    pass
-
-            keyboard = []
-            text = "📁 *Selecciona el Proyecto para trabajar:*\n\n"
-            for idx, (name, path) in enumerate(git_projects):
-                key = str(idx)
-                state.project_cache[key] = path
-                mark = "👉 " if path == state.current_project else "▫️ "
-                parent = os.path.basename(os.path.dirname(path))
-                text += f"{mark}*{name}* `({parent})`\n"
-                keyboard.append([InlineKeyboardButton(f"{'👉 ' if path == state.current_project else ''}Abrir {name}", callback_data=f"proj_{key}")])
-            await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(keyboard))
+            text, markup = build_projects_view()
+            await safe_edit_message(query, text, reply_markup=markup)
             return
+
+        elif data == "btn_new_project":
+            if len(WORKSPACE_ROOTS) == 1:
+                chosen_root = WORKSPACE_ROOTS[0]
+                USER_FLOWS[query.message.chat_id] = {
+                    "flow": "NEW_PROJECT_FOLDER",
+                    "parent": chosen_root,
+                }
+                text = (
+                    f"📁 *Crear Nuevo Proyecto en:* `{chosen_root}`\n\n"
+                    f"Por favor, escribe el nombre de la carpeta para el nuevo proyecto:\n"
+                    f"_(Ejemplo: `mi-nuevo-saas`, `sistema-ventas`, `backend-api`)_"
+                )
+                kb = [[InlineKeyboardButton("❌ Cancelar", callback_data="cancel_flow")]]
+                await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
+            else:
+                text, markup = build_new_project_roots_view()
+                await safe_edit_message(query, text, reply_markup=markup)
+            return
+
+        elif data.startswith("newproj_root_"):
+            idx = int(data.replace("newproj_root_", ""))
+            if 0 <= idx < len(WORKSPACE_ROOTS):
+                chosen_root = WORKSPACE_ROOTS[idx]
+                flow_data = USER_FLOWS.get(query.message.chat_id, {})
+                if flow_data.get("flow") == "NEW_PROJECT_CHOOSE_ROOT" and flow_data.get("folder_name"):
+                    folder_name = flow_data["folder_name"]
+                    await create_new_project(query, context, chosen_root, folder_name)
+                    return
+                else:
+                    USER_FLOWS[query.message.chat_id] = {
+                        "flow": "NEW_PROJECT_FOLDER",
+                        "parent": chosen_root,
+                    }
+                    text = (
+                        f"📁 *Crear Nuevo Proyecto en:* `{chosen_root}`\n\n"
+                        f"Por favor, escribe el nombre de la carpeta para el nuevo proyecto:\n"
+                        f"_(Ejemplo: `mi-nuevo-saas`, `sistema-ventas`, `backend-api`)_"
+                    )
+                    kb = [[InlineKeyboardButton("❌ Cancelar", callback_data="cancel_flow")]]
+                    await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        elif data == "btn_github":
+            text, markup = build_github_view()
+            await safe_edit_message(query, text, reply_markup=markup)
+            return
+
+        elif data == "gh_init_git":
+            target = state.current_project
+            if target and os.path.exists(target):
+                run_cmd("git init -b main", cwd=target)
+                gitignore_p = os.path.join(target, ".gitignore")
+                if not os.path.exists(gitignore_p):
+                    with open(gitignore_p, "w", encoding="utf-8") as f:
+                        f.write("node_modules/\n__pycache__/\n*.py[cod]\n.env\n.DS_Store\nThumbs.db\ndist/\nbuild/\n")
+                readme_p = os.path.join(target, "README.md")
+                if not os.path.exists(readme_p):
+                    with open(readme_p, "w", encoding="utf-8") as f:
+                        f.write(f"# {os.path.basename(target)}\n\nProyecto inicializado con Antigravity Mobile Bridge.\n")
+            text, markup = build_github_view()
+            await safe_edit_message(query, text, reply_markup=markup)
+            return
+
+        elif data == "gh_choose_create_profile":
+            target = state.current_project
+            proj_name = sanitize_telegram_markdown(os.path.basename(os.path.normpath(target)) if target else "Proyecto")
+            text = (
+                f"🐙 *Crear Repositorio en GitHub*\n"
+                f"──────────────────────────────\n"
+                f"📁 *Proyecto:* `{proj_name}`\n\n"
+                f"¿Con qué cuenta o perfil de usuario deseas crear el repositorio?\n\n"
+                f"• *👤 Personal (gersonja):* Cuenta personal de GitHub vía HTTPS / GitHub CLI.\n"
+                f"• *🏢 Trabajo (gersoncastellanos):* Cuenta laboral / cliente configurada vía SSH."
+            )
+            kb = [
+                [InlineKeyboardButton("👤 Personal: gersonja (HTTPS)", callback_data="gh_create_prof:personal")],
+                [InlineKeyboardButton("🏢 Trabajo: gersoncastellanos (SSH)", callback_data="gh_create_prof:work_ssh")],
+                [InlineKeyboardButton("🔙 Volver a GitHub", callback_data="btn_github")],
+            ]
+            await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        elif data.startswith("gh_create_prof:"):
+            prof_id = data.replace("gh_create_prof:", "")
+            prof = GITHUB_PROFILES.get(prof_id, GITHUB_PROFILES["personal"])
+            text = (
+                f"🐙 *Visibilidad en GitHub*\n"
+                f"──────────────────────────────\n"
+                f"👤 *Perfil:* {prof['label']}\n"
+                f"🏷️ *Owner:* `{prof['user']}`\n\n"
+                f"Selecciona la visibilidad del repositorio en GitHub:"
+            )
+            kb = [
+                [InlineKeyboardButton("🔒 Privado (Recomendado)", callback_data=f"gh_create_vis:{prof_id}:private")],
+                [InlineKeyboardButton("🌐 Público", callback_data=f"gh_create_vis:{prof_id}:public")],
+                [InlineKeyboardButton("🔙 Volver", callback_data="gh_choose_create_profile")],
+            ]
+            await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        elif data.startswith("gh_create_vis:"):
+            parts = data.split(":")
+            prof_id = parts[1]
+            visibility = parts[2]
+            target = state.current_project
+            repo_name = os.path.basename(os.path.normpath(target)) if target else "mi-repo"
+            prof = GITHUB_PROFILES.get(prof_id, GITHUB_PROFILES["personal"])
+            proto_label = "SSH (git@github.com:...)" if prof["protocol"] == "ssh" else "HTTPS (https://github.com/...)"
+            text = (
+                f"🐙 *Confirmar Creación en GitHub*\n"
+                f"──────────────────────────────\n"
+                f"📁 *Repositorio:* `{repo_name}`\n"
+                f"👤 *Perfil:* {prof['label']}\n"
+                f"🏷️ *Owner:* `{prof['user']}`\n"
+                f"🔒 *Visibilidad:* `{visibility.capitalize()}`\n"
+                f"🌐 *Protocolo:* `{proto_label}`\n"
+                f"──────────────────────────────\n"
+                f"¿Deseas proceder a crear y enlazar el repositorio en GitHub?"
+            )
+            kb = [
+                [InlineKeyboardButton("✅ Confirmar y Crear en GitHub", callback_data=f"gh_create_do:{prof_id}:{visibility}:{repo_name}")],
+                [InlineKeyboardButton("✏️ Cambiar Nombre", callback_data=f"gh_custom_name:{prof_id}:{visibility}")],
+                [InlineKeyboardButton("❌ Cancelar", callback_data="btn_github")],
+            ]
+            await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        elif data.startswith("gh_create_do:"):
+            parts = data.split(":", 3)
+            prof_id = parts[1]
+            visibility = parts[2]
+            repo_name = parts[3]
+            await do_create_github_repo_flow(query, context, prof_id, visibility, repo_name)
+            return
+
+        elif data.startswith("gh_custom_name:"):
+            parts = data.split(":")
+            prof_id = parts[1]
+            visibility = parts[2]
+            USER_FLOWS[query.message.chat_id] = {
+                "flow": "GITHUB_CUSTOM_NAME",
+                "profile_id": prof_id,
+                "visibility": visibility,
+            }
+            text = (
+                f"🐙 *Nombre de Repositorio en GitHub*\n\n"
+                f"Por favor, escribe el nombre que tendrá el repositorio en GitHub:\n"
+                f"_(Solo letras, números, guiones y puntos)_"
+            )
+            kb = [[InlineKeyboardButton("❌ Cancelar", callback_data="btn_github")]]
+            await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        elif data == "gh_prompt_link_remote":
+            USER_FLOWS[query.message.chat_id] = {
+                "flow": "GITHUB_LINK_EXISTING",
+            }
+            text = (
+                "🔗 *Enlazar Repositorio GitHub Existente*\n\n"
+                "Por favor, escribe la URL del repositorio remoto (HTTPS o SSH) o el identificador `usuario/repositorio`:\n\n"
+                "• *HTTPS:* `https://github.com/gersonja/mi-app.git`\n"
+                "• *SSH:* `git@github.com:Shenzhen-Fiber-System/mi-app.git`\n"
+                "• *Corto:* `gersonja/mi-app`"
+            )
+            kb = [[InlineKeyboardButton("❌ Cancelar", callback_data="cancel_flow")]]
+            await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        elif data.startswith("gh_link_proto:"):
+            parts = data.split(":")
+            owner_repo = parts[1]
+            proto = parts[2]
+            target = state.current_project
+            if proto == "ssh":
+                full_url = f"git@github.com:{owner_repo}.git"
+                prof = GITHUB_PROFILES["work_ssh"]
+            else:
+                full_url = f"https://github.com/{owner_repo}.git"
+                prof = GITHUB_PROFILES["personal"]
+
+            run_cmd("git remote remove origin", cwd=target)
+            run_cmd(f"git remote add origin {full_url}", cwd=target)
+            run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=target)
+            run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=target)
+
+            text = (
+                f"✅ *Remote GitHub Configurado Exitosamente*\n"
+                f"──────────────────────────────\n"
+                f"🔗 *URL:* `{full_url}`\n"
+                f"👤 *Identidad:* {prof['label']}\n"
+                f"──────────────────────────────\n"
+                f"¿Deseas realizar el Primer Commit para subir tus archivos a GitHub?"
+            )
+            kb = [
+                [InlineKeyboardButton("🚀 Hacer Primer Commit & Push", callback_data="gh_first_commit")],
+                [InlineKeyboardButton("🐙 Ver Panel GitHub", callback_data="btn_github")],
+            ]
+            await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        elif data == "gh_switch_identity":
+            target = state.current_project
+            _, cur_name = run_cmd("git config user.name", cwd=target)
+            _, cur_email = run_cmd("git config user.email", cwd=target)
+            text = (
+                f"👤 *Configuración de Identidad Git Local*\n"
+                f"──────────────────────────────\n"
+                f"Identidad actual en este proyecto:\n"
+                f"• Nombre: `{cur_name.strip()}`\n"
+                f"• Email: `{cur_email.strip()}`\n\n"
+                f"Selecciona el perfil que deseas aplicar para este repositorio:"
+            )
+            kb = [
+                [InlineKeyboardButton("👤 Personal: Gerson Javier (gersonja)", callback_data="gh_set_identity:personal")],
+                [InlineKeyboardButton("🏢 Trabajo: Gerson Castellanos (SSH)", callback_data="gh_set_identity:work_ssh")],
+                [InlineKeyboardButton("🔙 Volver a GitHub", callback_data="btn_github")],
+            ]
+            await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        elif data.startswith("gh_set_identity:"):
+            prof_id = data.replace("gh_set_identity:", "")
+            prof = GITHUB_PROFILES.get(prof_id, GITHUB_PROFILES["personal"])
+            target = state.current_project
+            run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=target)
+            run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=target)
+            await query.answer(f"Identidad actualizada a {prof['label']}")
+            text, markup = build_github_view()
+            await safe_edit_message(query, text, reply_markup=markup)
+            return
+
+        elif data == "gh_first_commit":
+            await do_first_commit(query, context)
+            return
+
+        elif data == "gh_push_remote":
+            target = state.current_project
+            await query.answer("🚀 Subiendo cambios a origin...", show_alert=False)
+            code_p, out_p = run_cmd("git push -u origin HEAD", cwd=target, timeout=90)
+            if code_p == 0:
+                await safe_edit_message(query, "✅ *Push completado exitosamente a GitHub.*", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🐙 Ver Panel GitHub", callback_data="btn_github")]]))
+            else:
+                await safe_edit_message(query, f"⚠️ *Error en push:*\n```text\n{out_p[-600:] if len(out_p) > 600 else out_p}\n```", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("🐙 Ver Panel GitHub", callback_data="btn_github")]]))
+            return
+
+        elif data == "gh_fetch_remote":
+            target = state.current_project
+            await query.answer("🔄 Sincronizando con GitHub...", show_alert=False)
+            run_cmd("git fetch origin", cwd=target, timeout=30)
+            text, markup = build_github_view()
+            await safe_edit_message(query, text, reply_markup=markup)
+            return
+
+        elif data == "start_coding":
+            target = state.current_project
+            proj_name = sanitize_telegram_markdown(os.path.basename(os.path.normpath(target)) if target else "Proyecto")
+            text = (
+                f"💡 *¡Listo para programar en* `{proj_name}`*!*\n\n"
+                f"Escribe aquí mismo en el chat tu primer mensaje o petición.\n\n"
+                f"Por ejemplo:\n"
+                f"• _\"Crea una API en FastAPI con autenticación JWT y PostgreSQL\"_\n"
+                f"• _\"Inicializa una app en React con Tailwind y diseña la landing page\"_\n"
+                f"• _\"Crea el script principal con las dependencias y la estructura base\"_\n\n"
+                f"Antigravity creará los archivos, código y comandos de inmediato."
+            )
+            kb = [
+                [InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status")],
+            ]
+            await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
+            return
+
+        elif data == "cancel_flow":
+            USER_FLOWS.pop(query.message.chat_id, None)
+            await safe_edit_message(query, "Operación cancelada.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status")]]))
+            return
+
 
         elif data == "btn_sessions":
             text, markup = build_sessions_view(state.current_project, state.active_session_id)
@@ -3618,16 +4690,54 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_authorized(update):
         return
 
-    if not state.current_project:
-        await safe_reply_message(update.effective_message, "⚠️ No has seleccionado un proyecto. Envía `/projects` primero.")
+    chat_id = update.effective_chat.id
+    user_text = update.message.text.strip() if update.message and update.message.text else ""
+    if not user_text:
         return
 
-    user_text = update.message.text.strip() if update.message else ""
-    if not user_text:
+    # Si hay un flujo conversacional interactivo activo y no es un comando con barra "/"
+    if chat_id in USER_FLOWS and not user_text.startswith("/"):
+        flow_data = USER_FLOWS[chat_id]
+        flow_name = flow_data.get("flow")
+
+        if user_text.lower() in ("cancelar", "cancel", "salir"):
+            USER_FLOWS.pop(chat_id, None)
+            await safe_reply_message(update.effective_message, "Operación cancelada.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("📊 Panel de Estado", callback_data="btn_status")]]))
+            return
+
+        if flow_name == "NEW_PROJECT_FOLDER":
+            parent = flow_data.get("parent", WORKSPACE_ROOTS[0])
+            await create_new_project(update, context, parent, user_text)
+            return
+
+        elif flow_name == "GITHUB_LINK_EXISTING":
+            await handle_flow_github_link(update, context, user_text)
+            return
+
+        elif flow_name == "GITHUB_CUSTOM_NAME":
+            prof_id = flow_data.get("profile_id", "personal")
+            vis = flow_data.get("visibility", "private")
+            clean_name = re.sub(r'[<>:"/\\|?*]', '', user_text).strip()
+            USER_FLOWS.pop(chat_id, None)
+            await do_create_github_repo_flow(update, context, prof_id, vis, clean_name)
+            return
+
+    if not state.current_project:
+        await safe_reply_message(
+            update.effective_message,
+            "⚠️ No has seleccionado un proyecto activo.\n"
+            "• Usa `/projects` para abrir un repositorio existente.\n"
+            "• O usa `/newproject` para crear un nuevo proyecto.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("➕ Crear Nuevo Proyecto", callback_data="btn_new_project")],
+                [InlineKeyboardButton("📁 Ver Proyectos", callback_data="btn_projects")],
+            ])
+        )
         return
 
     state.last_prompt = user_text
     await execute_antigravity_task(update, context, user_text)
+
 
 # =============================================================================
 # MANEJADOR GLOBAL DE ERRORES
@@ -3684,6 +4794,9 @@ def main():
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("projects", cmd_projects))
     app.add_handler(CommandHandler("switch_project", cmd_projects))
+    app.add_handler(CommandHandler("newproject", cmd_new_project))
+    app.add_handler(CommandHandler("new_project", cmd_new_project))
+    app.add_handler(CommandHandler("crearproyecto", cmd_new_project))
     app.add_handler(CommandHandler("exit_project", cmd_exit_project))
     app.add_handler(CommandHandler("close_project", cmd_exit_project))
 
@@ -3715,11 +4828,17 @@ def main():
     # Git y Código
     app.add_handler(CommandHandler("diff", cmd_diff))
     app.add_handler(CommandHandler("commit", cmd_commit))
+    app.add_handler(CommandHandler("firstcommit", cmd_first_commit))
+    app.add_handler(CommandHandler("primercommit", cmd_first_commit))
+    app.add_handler(CommandHandler("github", cmd_github))
+    app.add_handler(CommandHandler("gh", cmd_github))
+    app.add_handler(CommandHandler("remote", cmd_github))
     app.add_handler(CommandHandler("revert", lambda u, c: safe_reply_message(u.effective_message, "Para revertir usa el botón de confirmación en `/diff` o envía `/cmd git restore .`")))
     app.add_handler(CommandHandler("branches", cmd_branches))
     app.add_handler(CommandHandler("branch", cmd_branch))
     app.add_handler(CommandHandler("ramas", cmd_branches))
     app.add_handler(CommandHandler("rama", cmd_branch))
+
 
     # Super Dev, CI/CD y Automatización
     app.add_handler(CommandHandler("autopush", cmd_autopush))

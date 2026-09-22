@@ -72,7 +72,7 @@ El archivo `bot_state.json` reside en el directorio de trabajo del bot y preserv
 
 ---
 
-## 2. Catálogo Exhaustivo de Comandos (37 Comandos y Alias)
+## 2. Catálogo Exhaustivo de Comandos (40 Comandos y Alias)
 
 ---
 
@@ -133,6 +133,19 @@ El archivo `bot_state.json` reside en el directorio de trabajo del bot y preserv
   3. Establece `state.active_session_title = None`.
   4. Guarda el estado en `bot_state.json`.
   5. Despliega la lista de proyectos disponibles para seleccionar uno nuevo.
+
+#### 5b. `/newproject [nombre]`, `/crearproyecto [nombre]`
+* **Descripción:** Permite crear un nuevo proyecto desde Telegram seleccionando la carpeta padre configurada (`ANTIGRAVITY_WORKSPACE_ROOTS`) e inicializando Git de inmediato.
+* **Manejador interno:** `cmd_new_project(update, context)`, `create_new_project(...)`
+* **Acciones internas ejecutadas:**
+  1. Si no se especifica nombre o carpeta padre, presenta botones interactivos con las carpetas raíz (`WORKSPACE_ROOTS`).
+  2. Solicita el nombre de la carpeta interna mediante el flujo interactivo seguro (`USER_FLOWS`).
+  3. Crea el directorio con `os.makedirs`.
+  4. Inicializa el repositorio con `git init -b main`.
+  5. Crea `.gitignore` y `README.md` predeterminados.
+  6. Fija el nuevo directorio como `state.current_project` e inicia en modo hilo limpio (`active_session_id = None`).
+  7. Ofrece botones inmediatos para enlazar a GitHub (`[ 🔗 Enlazar a GitHub ]`), hacer el primer commit (`[ 🚀 Primer Commit ]`) o comenzar a programar (`[ 💬 Comenzar a Programar ]`).
+
 
 ---
 
@@ -260,6 +273,30 @@ El archivo `bot_state.json` reside en el directorio de trabajo del bot y preserv
 * **Manejador interno:** `cmd_branch(update, context)`
 * **Acciones internas ejecutadas:** Ejecuta `git checkout <nombre>` o `git checkout -b <nombre>`.
 
+#### 19b. `/firstcommit [mensaje]`, `/primercommit [mensaje]`
+* **Descripción:** Realiza el primer commit formal en un repositorio recién creado o sin historial y lo empuja estableciendo upstream (`git push -u origin <branch>`).
+* **Manejador interno:** `cmd_first_commit(update, context)` y `do_first_commit(update, context, custom_msg)`
+* **Acciones internas ejecutadas:**
+  1. Verifica el estado del repositorio mediante `get_git_status_details()`.
+  2. Si la rama no es `main`, la renombra con `git branch -M main`.
+  3. Ejecuta `git add -A`.
+  4. Crea el commit inicial (`Initial commit` o mensaje personalizado).
+  5. Si tiene remoto `origin`, ejecuta `git push -u origin main`.
+  6. Si no tiene remoto configurado, preserva el commit localmente e invita a vincular GitHub con el botón `[ 🔗 Enlazar a GitHub ]`.
+
+#### 19c. `/github`, `/repo`
+* **Descripción:** Centro de control integral de GitHub y repositorios remotos. Muestra el estado del remoto, protocolo activo (HTTPS / SSH), identidad de autor y botones de sincronización.
+* **Manejador interno:** `cmd_github(update, context)` y `build_github_view(repo_path)`
+* **Acciones internas ejecutadas:**
+  1. Ejecuta diagnóstico profundo (`get_git_status_details()`): rama actual, commits locales, hash HEAD, URL remota y estado de sincronización (`SIN REPOSITORIO GIT`, `SIN COMMITS AÚN`, `SÓLO LOCAL`, `AL DÍA`, `ADELANTADO`, `ATRASADO`).
+  2. Muestra badge de protocolo (`🔒 SSH: git@github.com:...` o `🌐 HTTPS: https://github.com/...`).
+  3. Despliega botonera inteligente adaptada al estado:
+     - Si no hay remoto: `[ 🌐 Crear Repo en GitHub ]`, `[ 🔗 Vincular Remoto ]`, `[ 👤 Cambiar Identidad Git ]`.
+     - Si no hay commits: `[ 🚀 Primer Commit & Push ]`.
+     - Si hay cambios pendientes: `[ 🔍 Ver Diff ]`.
+     - Si hay commits por subir: `[ ⬆️ Empujar (Push) ]`.
+     - Si está configurado: `[ 🔄 Sincronizar (Fetch) ]`.
+
 ---
 
 ### G. Automatización, CI/CD y Healthcheck
@@ -345,6 +382,8 @@ Todos los botones interactivos del bot operan mediante el protocolo `CallbackQue
 | Botón Visible | Callback Data | Vista Origen | Acción Interna en Python (`handle_callback`) |
 |---|---|---|---|
 | `[ 📁 Proyectos ]` | `btn_projects` | `/status`, `/start` | Escanea repositorios en `WORKSPACE_ROOTS` y abre el menú de selección de proyecto. |
+| `[ ➕ Crear Nuevo Proyecto ]` | `btn_new_project` | Selector de Proyectos | Despliega selector de carpetas raíz para crear un nuevo proyecto. |
+| `[ 📁 <Carpeta Raíz> ]` | `newproj_root_<idx>` | Selector de Raíces | Inicia el flujo conversacional solicitando el nombre de la subcarpeta interna. |
 | `[ Abrir <Nombre> ]` | `proj_<idx>` | Selector de Proyectos | Fija `state.current_project = ruta`, resetea la sesión activa y guarda `bot_state.json`. |
 | `[ 💬 Sesiones ]` | `btn_sessions` | `/status` | Escanea SQLite del IDE y despliega las 5 conversaciones más recientes del proyecto. |
 | `[ 📌 <Título> ]` | `ses_<UUID>` | Selector de Sesiones | Fija `state.active_session_id = UUID`, carga la última interacción y muestra botones de plan/walkthrough. |
@@ -367,6 +406,18 @@ Todos los botones interactivos del bot operan mediante el protocolo `CallbackQue
 | `[ Cancelar ]` | `revert_cancel` | Confirmación Revert | Cancela la reversión dejando los archivos intactos. |
 | `[ 🌿 Ramas ]` | `btn_branches` | `/status` | Ejecuta `build_branches_view()` y lista las ramas locales recientes. |
 | `[ 🔀 Cambiar a <Rama> ]` | `branch_co_<nombre>` | Selector de Ramas | Ejecuta `git checkout <nombre>` y confirma el cambio de rama activa. |
+| `[ 🐙 GitHub ]` | `btn_github` | `/status`, Proyectos | Despliega la tarjeta diagnóstica de Git y opciones de GitHub. |
+| `[ 🌐 Crear Repo en GitHub ]` | `gh_choose_create_profile` | Vista de GitHub | Permite elegir identidad (`gersonja` HTTPS o `gersoncastellanos` SSH) para crear repo. |
+| `[ 👤 <Perfil> ]` | `gh_create_prof:<key>` | Asistente de Creación | Selecciona el perfil y solicita visibilidad (Privado o Público). |
+| `[ 🔒 Privado / 🌍 Público ]` | `gh_create_vis:...` | Asistente de Creación | Configura visibilidad y pregunta si usar nombre actual o personalizado. |
+| `[ 🚀 Crear con Nombre Actual ]` | `gh_create_do:...` | Asistente de Creación | Crea el repo en GitHub vía `gh` o SSH y vincula `origin`. |
+| `[ 🔗 Vincular Remoto ]` | `gh_prompt_link_remote` | Vista de GitHub | Ofrece vincular por HTTPS o SSH solicitando la URL o repositorio remoto. |
+| `[ 👤 Cambiar Identidad Git ]` | `gh_switch_identity` | Vista de GitHub | Muestra las identidades configuradas para cambiar el autor del repo local. |
+| `[ 🚀 Primer Commit & Push ]` | `gh_first_commit` | Vista de GitHub | Ejecuta `git branch -M main`, `git add -A`, `git commit` y `git push -u origin main`. |
+| `[ ⬆️ Empujar (Push) ]` | `gh_push_remote` | Vista de GitHub | Ejecuta `git push origin <rama>` sincronizando commits pendientes. |
+| `[ 🔄 Sincronizar (Fetch) ]` | `gh_fetch_remote` | Vista de GitHub | Ejecuta `git fetch origin` y refresca el estado del repositorio. |
+| `[ 💬 Comenzar a Programar ]` | `start_coding` | Creación de Proyecto | Cambia a modo hilo limpio e invita a ingresar el primer requerimiento de código. |
+| `[ ❌ Cancelar Flujo ]` | `cancel_flow` | Asistentes Activos | Aborta cualquier flujo conversacional en curso (`USER_FLOWS`). |
 | `[ 🚀 CI/CD ]` | `btn_ci` | `/status`, Health | Consulta GitHub Actions vía `gh run list` y despliega el estado del pipeline. |
 | `[ 🔄 Refrescar CI/CD ]` | `ci_refresh` | Vista de CI/CD | Reejecuta la consulta a GitHub Actions y actualiza el mensaje. |
 | `[ 👁️ Vigilar Fin de Deploy ]` | `ci_watch_<id>` | CI/CD, Commit | Inicia tarea asíncrona en segundo plano que sondea el run y notifica al concluir. |
@@ -522,6 +573,49 @@ El hilo de fondo del Watchdog consulta la API Win32 cada 45 segundos:
 * **Transición AC $\rightarrow$ Batería:** Envía una alerta de alta prioridad a Telegram notificando el corte eléctrico y los minutos de autonomía estimada.
 * **Transición Batería $\rightarrow$ AC:** Envía una confirmación indicando que la red eléctrica fue restaurada.
 * **Cero Sobrecarga:** La llamada a `GetSystemPowerStatus` consume 0% de CPU y menos de 1 KB de memoria.
+
+---
+
+### Flujo 8: Creación Interactiva de Proyectos, Vinculación a GitHub y Primer Commit Multi-Identidad
+
+Este flujo transforma al bot en una factoría completa de proyectos móviles con control de versiones:
+
+```mermaid
+flowchart TD
+    Start[Botón 'Crear Nuevo Proyecto' o /newproject] --> ChooseRoot[Seleccionar Carpeta Raíz WORKSPACE_ROOTS]
+    ChooseRoot --> InputName[Telegram solicita Nombre de la Subcarpeta]
+    InputName --> CreateLocal[os.makedirs + git init -b main + README + .gitignore]
+    CreateLocal --> SwitchProj[Fija Proyecto Activo y Modo Hilo Limpio]
+    SwitchProj --> CardChoice{¿Qué desea hacer el usuario?}
+    CardChoice -->|1. Comenzar Código| CodeDirect[Envía prompt directo a agy]
+    CardChoice -->|2. Crear Repo Remoto| SelectProfile[Elegir Perfil: Personal HTTPS vs Global SSH]
+    SelectProfile --> Visibility[Elegir Visibilidad: Privado o Público]
+    Visibility --> CreateRemote[gh repo create o configuración SSH git@github.com]
+    CreateRemote --> ReadyToCommit[Remoto origin vinculado con éxito]
+    ReadyToCommit --> FirstCommit[/firstcommit o botón Primer Commit]
+    FirstCommit --> PushMain[git add -A + commit + git push -u origin main]
+```
+
+1. **Selección de Raíz y Aislamiento de Carpetas:**
+   - Lee `ANTIGRAVITY_WORKSPACE_ROOTS` del `.env` (permite raíces múltiples como `C:\proyectos2026`, `D:\workspace`).
+   - El usuario selecciona la raíz táctilmente o ingresa `/newproject <nombre>`.
+   - La máquina de estados `USER_FLOWS` retiene el contexto del usuario (`awaiting_new_project_name`) y previene cualquier bloqueo del bot.
+
+2. **Inicialización Limpia y Estandarizada:**
+   - Ejecuta `git init -b main` garantizando que la rama predeterminada sea `main`.
+   - Genera automáticamente un `.gitignore` completo adaptado a entornos modernos (Node.js, Python, temporales de Antigravity IDE) y un `README.md` base.
+   - Conmuta de inmediato el proyecto activo en `bot_state.json` y desvincula la sesión anterior (`active_session_id = None`), dejando el bot listo para arrancar en modo hilo limpio.
+
+3. **Arquitectura Multi-Identidad (Personal HTTPS vs. Global SSH):**
+   - El bot soporta múltiples identidades configuradas en `.env` (`GITHUB_PROFILES`):
+     * **Personal (`gersonja`):** Autenticado vía GitHub CLI (`gh repo create`) con protocolo HTTPS (`https://github.com/gersonja/<repo>.git`).
+     * **Global / Trabajo (`gersoncastellanos`):** Autenticado vía SSH (`git@github.com:gersoncastellanos/<repo>.git`) utilizando la clave RSA configurada en el sistema.
+   - Al crear el repositorio remoto o cambiar de identidad, el puente configura `git config user.name` y `git config user.email` a nivel local en el repositorio, eliminando cualquier conflicto de autoría entre proyectos personales y profesionales.
+
+4. **Primer Commit Robusto (`do_first_commit`):**
+   - Resuelve el problema clásico de Git donde comandos como `git rev-parse HEAD` o `git log` fallan al no existir commits previos (`fatal: your current branch 'main' does not have any commits yet`).
+   - El helper `get_git_status_details()` detecta este estado y marca `NO_COMMITS`.
+   - La rutina ejecuta de forma segura `git add -A`, crea el commit inicial y, si existe un remoto `origin`, ejecuta `git push -u origin main`, dejando el upstream configurado de por vida.
 
 ---
 

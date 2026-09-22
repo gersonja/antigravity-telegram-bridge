@@ -125,21 +125,26 @@ raw_roots = os.environ.get("ANTIGRAVITY_WORKSPACE_ROOTS", BASE_DIR)
 WORKSPACE_ROOTS = [os.path.normpath(os.path.expanduser(p.strip())) for p in re.split(r"[,;]", raw_roots) if p.strip()]
 
 # Perfiles de GitHub y Git (Personal vs Trabajo / SSH)
+_pers_user = os.environ.get("GITHUB_PERSONAL_USER", "").strip()
+_pers_label = f"👤 Personal ({_pers_user})" if _pers_user else "👤 Personal (HTTPS)"
+_work_user = os.environ.get("GITHUB_WORK_USER", "").strip()
+_work_label = f"🏢 Trabajo ({_work_user})" if _work_user else "🏢 Trabajo (SSH)"
+
 GITHUB_PROFILES = {
     "personal": {
         "id": "personal",
-        "label": "👤 Personal (gersonja - HTTPS)",
-        "name": os.environ.get("GITHUB_PERSONAL_NAME", "Gerson Javier Castellanos Niño").strip(),
-        "email": os.environ.get("GITHUB_PERSONAL_EMAIL", "gersonja@gmail.com").strip(),
-        "user": os.environ.get("GITHUB_PERSONAL_USER", "gersonja").strip(),
+        "label": _pers_label,
+        "name": os.environ.get("GITHUB_PERSONAL_NAME", "").strip(),
+        "email": os.environ.get("GITHUB_PERSONAL_EMAIL", "").strip(),
+        "user": _pers_user,
         "protocol": os.environ.get("GITHUB_PERSONAL_PROTOCOL", "https").strip().lower(),
     },
     "work_ssh": {
         "id": "work_ssh",
-        "label": "🏢 Trabajo / Global (gersoncastellanos - SSH)",
-        "name": os.environ.get("GITHUB_WORK_NAME", "Gerson Castellanos").strip(),
-        "email": os.environ.get("GITHUB_WORK_EMAIL", "gcastellanos@szfibersystem.com").strip(),
-        "user": os.environ.get("GITHUB_WORK_USER", "gersoncastellanos").strip(),
+        "label": _work_label,
+        "name": os.environ.get("GITHUB_WORK_NAME", "").strip(),
+        "email": os.environ.get("GITHUB_WORK_EMAIL", "").strip(),
+        "user": _work_user,
         "protocol": os.environ.get("GITHUB_WORK_PROTOCOL", "ssh").strip().lower(),
     },
 }
@@ -2485,9 +2490,17 @@ def get_git_status_details(repo_path: Optional[str] = None) -> Dict[str, Any]:
     u_email = user_email.strip()
 
     active_profile_id = "custom"
-    if "gersonja@gmail.com" in u_email.lower():
+    pers_email = GITHUB_PROFILES["personal"]["email"].lower()
+    work_email = GITHUB_PROFILES["work_ssh"]["email"].lower()
+    pers_user = GITHUB_PROFILES["personal"]["user"].lower()
+    work_user = GITHUB_PROFILES["work_ssh"]["user"].lower()
+    if pers_email and pers_email in u_email.lower():
         active_profile_id = "personal"
-    elif "gcastellanos@szfibersystem.com" in u_email.lower():
+    elif work_email and work_email in u_email.lower():
+        active_profile_id = "work_ssh"
+    elif pers_user and pers_user in u_name.lower():
+        active_profile_id = "personal"
+    elif work_user and work_user in u_name.lower():
         active_profile_id = "work_ssh"
 
     if not has_commits:
@@ -2860,7 +2873,7 @@ async def create_new_project(update_or_query: Any, context: ContextTypes.DEFAULT
         f"💬 *Sesión:* ✨ Hilo Nuevo Limpio\n"
         f"──────────────────────────────\n"
         f"¿Qué deseas hacer a continuación?\n"
-        f"• *🔗 Enlazar a GitHub:* Vincula este repositorio a tu cuenta personal (`gersonja`) o laboral (`gersoncastellanos`).\n"
+        f"• *🔗 Enlazar a GitHub:* Vincula este repositorio a tu cuenta de GitHub (personal o laboral).\n"
         f"• *🚀 Primer Commit:* Registra los archivos iniciales (`README.md`, `.gitignore`) en Git.\n"
         f"• *💬 Comenzar a Programar:* Escribe directamente las instrucciones de lo que deseas construir."
     )
@@ -2962,10 +2975,14 @@ def build_github_view(repo_path: Optional[str] = None) -> Tuple[str, InlineKeybo
 
     # Identificar perfil activo
     active_prof_label = "▫️ Personalizado / Global"
-    if "gersonja@gmail.com" in user_email.lower():
-        active_prof_label = "👤 Personal (gersonja)"
-    elif "gcastellanos@szfibersystem.com" in user_email.lower():
-        active_prof_label = "🏢 Trabajo (gersoncastellanos)"
+    pers_email = GITHUB_PROFILES["personal"]["email"].lower()
+    work_email = GITHUB_PROFILES["work_ssh"]["email"].lower()
+    if pers_email and pers_email in user_email.lower():
+        active_prof_label = GITHUB_PROFILES["personal"]["label"]
+    elif work_email and work_email in user_email.lower():
+        active_prof_label = GITHUB_PROFILES["work_ssh"]["label"]
+    elif details.get("active_profile_id") in GITHUB_PROFILES:
+        active_prof_label = GITHUB_PROFILES[details["active_profile_id"]]["label"]
 
     status_cat = details["status_category"]
     if status_cat == "NO_COMMITS":
@@ -3051,44 +3068,48 @@ async def create_github_repo(repo_path: str, repo_name: str, profile_id: str, vi
     """Crea el repositorio en GitHub mediante gh CLI o configura el remote SSH correspondiente."""
     prof = GITHUB_PROFILES.get(profile_id, GITHUB_PROFILES["personal"])
     
-    # Configurar identidad local en el repo
-    run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=repo_path)
-    run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=repo_path)
+    # Configurar identidad local en el repo si está definida
+    if prof.get("name"):
+        run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=repo_path)
+    if prof.get("email"):
+        run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=repo_path)
 
-    owner = prof["user"]
+    owner = prof.get("user", "").strip()
     clean_repo_name = re.sub(r'[^a-zA-Z0-9_.-]', '-', repo_name).strip("-")
+    target_spec = f"{owner}/{clean_repo_name}" if owner else clean_repo_name
 
     # Intentar creación con gh repo create
-    gh_cmd = f"gh repo create {owner}/{clean_repo_name} --{visibility} --source=. --remote=origin"
+    gh_cmd = f"gh repo create {target_spec} --{visibility} --source=. --remote=origin"
     code, out = run_cmd(gh_cmd, cwd=repo_path, timeout=60)
 
     # Si gh repo create tuvo éxito
     if code == 0:
         if prof["protocol"] == "ssh":
-            ssh_url = f"git@github.com:{owner}/{clean_repo_name}.git"
+            ssh_url = f"git@github.com:{owner}/{clean_repo_name}.git" if owner else f"git@github.com:{clean_repo_name}.git"
             run_cmd(f"git remote set-url origin {ssh_url}", cwd=repo_path)
             return True, f"Repositorio creado y enlazado vía SSH (`{ssh_url}`).", ssh_url
         else:
-            https_url = f"https://github.com/{owner}/{clean_repo_name}.git"
+            https_url = f"https://github.com/{owner}/{clean_repo_name}.git" if owner else f"https://github.com/{clean_repo_name}.git"
             return True, f"Repositorio creado y enlazado vía HTTPS (`{https_url}`).", https_url
 
     # Si falló porque ya existe o no se tienen permisos directos con gh
     if "already exists" in out.lower():
         if prof["protocol"] == "ssh":
-            target_url = f"git@github.com:{owner}/{clean_repo_name}.git"
+            target_url = f"git@github.com:{owner}/{clean_repo_name}.git" if owner else f"git@github.com:{clean_repo_name}.git"
         else:
-            target_url = f"https://github.com/{owner}/{clean_repo_name}.git"
+            target_url = f"https://github.com/{owner}/{clean_repo_name}.git" if owner else f"https://github.com/{clean_repo_name}.git"
         run_cmd("git remote remove origin", cwd=repo_path)
         run_cmd(f"git remote add origin {target_url}", cwd=repo_path)
         return True, f"El repositorio ya existía en GitHub. Se ha vinculado exitosamente como `origin` (`{target_url}`).", target_url
 
     # Si se seleccionó perfil SSH y gh no está autenticado como ese usuario
     if prof["protocol"] == "ssh":
-        target_url = f"git@github.com:{owner}/{clean_repo_name}.git"
+        target_url = f"git@github.com:{owner}/{clean_repo_name}.git" if owner else f"git@github.com:{clean_repo_name}.git"
         run_cmd("git remote remove origin", cwd=repo_path)
         run_cmd(f"git remote add origin {target_url}", cwd=repo_path)
+        ident_label = prof.get("name") or prof.get("user") or "SSH"
         return True, (
-            f"Remote SSH configurado exitosamente hacia `{target_url}` con identidad `{prof['name']}`.\n"
+            f"Remote SSH configurado exitosamente hacia `{target_url}` con identidad `{ident_label}`.\n"
             f"*(Aviso: Si aún no has creado el repo en la web de GitHub, créalo con el nombre `{clean_repo_name}`)*"
         ), target_url
 
@@ -3100,7 +3121,8 @@ async def do_create_github_repo_flow(update_or_query: Any, context: ContextTypes
     chat_id = update_or_query.effective_chat.id
 
     prof = GITHUB_PROFILES.get(profile_id, GITHUB_PROFILES["personal"])
-    await context.bot.send_message(chat_id=chat_id, text=f"🐙 _Creando repositorio `{prof['user']}/{repo_name}` en GitHub..._", parse_mode=constants.ParseMode.MARKDOWN)
+    repo_display = f"{prof['user']}/{repo_name}" if prof.get("user") else repo_name
+    await context.bot.send_message(chat_id=chat_id, text=f"🐙 _Creando repositorio `{repo_display}` en GitHub..._", parse_mode=constants.ParseMode.MARKDOWN)
 
     success, msg, remote_url = await create_github_repo(target, repo_name, profile_id, visibility)
 
@@ -3274,12 +3296,14 @@ async def handle_flow_github_link(update: Update, context: ContextTypes.DEFAULT_
         await safe_reply_message(update.effective_message, "Operación cancelada. No se proporcionó ninguna URL.")
         return
 
-    # Si el usuario escribió formato "owner/repo" (ej: gersonja/mi-app o Shenzhen-Fiber-System/repo)
+    # Si el usuario escribió formato "owner/repo" (ej: usuario/mi-app u org/repo)
     if re.match(r'^[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+$', input_clean):
+        pers_btn = GITHUB_PROFILES["personal"]["label"]
+        work_btn = GITHUB_PROFILES["work_ssh"]["label"]
         kb = [
             [
-                InlineKeyboardButton("🔒 HTTPS (Personal / gersonja)", callback_data=f"gh_link_proto:{input_clean}:https"),
-                InlineKeyboardButton("🔑 SSH (Trabajo / gersoncastellanos)", callback_data=f"gh_link_proto:{input_clean}:ssh"),
+                InlineKeyboardButton(f"🔒 HTTPS ({pers_btn})", callback_data=f"gh_link_proto:{input_clean}:https"),
+                InlineKeyboardButton(f"🔑 SSH ({work_btn})", callback_data=f"gh_link_proto:{input_clean}:ssh"),
             ],
             [InlineKeyboardButton("❌ Cancelar", callback_data="cancel_flow")]
         ]
@@ -4129,17 +4153,19 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "gh_choose_create_profile":
             target = state.current_project
             proj_name = sanitize_telegram_markdown(os.path.basename(os.path.normpath(target)) if target else "Proyecto")
+            pers = GITHUB_PROFILES["personal"]
+            work = GITHUB_PROFILES["work_ssh"]
             text = (
                 f"🐙 *Crear Repositorio en GitHub*\n"
                 f"──────────────────────────────\n"
                 f"📁 *Proyecto:* `{proj_name}`\n\n"
                 f"¿Con qué cuenta o perfil de usuario deseas crear el repositorio?\n\n"
-                f"• *👤 Personal (gersonja):* Cuenta personal de GitHub vía HTTPS / GitHub CLI.\n"
-                f"• *🏢 Trabajo (gersoncastellanos):* Cuenta laboral / cliente configurada vía SSH."
+                f"• *{pers['label']}:* Perfil personal de GitHub vía HTTPS / GitHub CLI.\n"
+                f"• *{work['label']}:* Perfil laboral / alternativo configurado vía SSH."
             )
             kb = [
-                [InlineKeyboardButton("👤 Personal: gersonja (HTTPS)", callback_data="gh_create_prof:personal")],
-                [InlineKeyboardButton("🏢 Trabajo: gersoncastellanos (SSH)", callback_data="gh_create_prof:work_ssh")],
+                [InlineKeyboardButton(f"{pers['label']}", callback_data="gh_create_prof:personal")],
+                [InlineKeyboardButton(f"{work['label']}", callback_data="gh_create_prof:work_ssh")],
                 [InlineKeyboardButton("🔙 Volver a GitHub", callback_data="btn_github")],
             ]
             await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
@@ -4148,11 +4174,12 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data.startswith("gh_create_prof:"):
             prof_id = data.replace("gh_create_prof:", "")
             prof = GITHUB_PROFILES.get(prof_id, GITHUB_PROFILES["personal"])
+            owner_disp = prof.get("user") or "Default (gh CLI)"
             text = (
                 f"🐙 *Visibilidad en GitHub*\n"
                 f"──────────────────────────────\n"
                 f"👤 *Perfil:* {prof['label']}\n"
-                f"🏷️ *Owner:* `{prof['user']}`\n\n"
+                f"🏷️ *Owner:* `{owner_disp}`\n\n"
                 f"Selecciona la visibilidad del repositorio en GitHub:"
             )
             kb = [
@@ -4171,12 +4198,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             repo_name = os.path.basename(os.path.normpath(target)) if target else "mi-repo"
             prof = GITHUB_PROFILES.get(prof_id, GITHUB_PROFILES["personal"])
             proto_label = "SSH (git@github.com:...)" if prof["protocol"] == "ssh" else "HTTPS (https://github.com/...)"
+            owner_disp = prof.get("user") or "Default (gh CLI)"
             text = (
                 f"🐙 *Confirmar Creación en GitHub*\n"
                 f"──────────────────────────────\n"
                 f"📁 *Repositorio:* `{repo_name}`\n"
                 f"👤 *Perfil:* {prof['label']}\n"
-                f"🏷️ *Owner:* `{prof['user']}`\n"
+                f"🏷️ *Owner:* `{owner_disp}`\n"
                 f"🔒 *Visibilidad:* `{visibility.capitalize()}`\n"
                 f"🌐 *Protocolo:* `{proto_label}`\n"
                 f"──────────────────────────────\n"
@@ -4223,9 +4251,9 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             text = (
                 "🔗 *Enlazar Repositorio GitHub Existente*\n\n"
                 "Por favor, escribe la URL del repositorio remoto (HTTPS o SSH) o el identificador `usuario/repositorio`:\n\n"
-                "• *HTTPS:* `https://github.com/gersonja/mi-app.git`\n"
-                "• *SSH:* `git@github.com:Shenzhen-Fiber-System/mi-app.git`\n"
-                "• *Corto:* `gersonja/mi-app`"
+                "• *HTTPS:* `https://github.com/usuario/mi-app.git`\n"
+                "• *SSH:* `git@github.com:empresa/mi-app.git`\n"
+                "• *Corto:* `usuario/mi-app`"
             )
             kb = [[InlineKeyboardButton("❌ Cancelar", callback_data="cancel_flow")]]
             await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
@@ -4245,8 +4273,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             run_cmd("git remote remove origin", cwd=target)
             run_cmd(f"git remote add origin {full_url}", cwd=target)
-            run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=target)
-            run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=target)
+            if prof.get("name"):
+                run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=target)
+            if prof.get("email"):
+                run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=target)
 
             text = (
                 f"✅ *Remote GitHub Configurado Exitosamente*\n"
@@ -4267,6 +4297,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             target = state.current_project
             _, cur_name = run_cmd("git config user.name", cwd=target)
             _, cur_email = run_cmd("git config user.email", cwd=target)
+            pers = GITHUB_PROFILES["personal"]
+            work = GITHUB_PROFILES["work_ssh"]
             text = (
                 f"👤 *Configuración de Identidad Git Local*\n"
                 f"──────────────────────────────\n"
@@ -4276,8 +4308,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Selecciona el perfil que deseas aplicar para este repositorio:"
             )
             kb = [
-                [InlineKeyboardButton("👤 Personal: Gerson Javier (gersonja)", callback_data="gh_set_identity:personal")],
-                [InlineKeyboardButton("🏢 Trabajo: Gerson Castellanos (SSH)", callback_data="gh_set_identity:work_ssh")],
+                [InlineKeyboardButton(f"{pers['label']}", callback_data="gh_set_identity:personal")],
+                [InlineKeyboardButton(f"{work['label']}", callback_data="gh_set_identity:work_ssh")],
                 [InlineKeyboardButton("🔙 Volver a GitHub", callback_data="btn_github")],
             ]
             await safe_edit_message(query, text, reply_markup=InlineKeyboardMarkup(kb))
@@ -4287,8 +4319,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             prof_id = data.replace("gh_set_identity:", "")
             prof = GITHUB_PROFILES.get(prof_id, GITHUB_PROFILES["personal"])
             target = state.current_project
-            run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=target)
-            run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=target)
+            if prof.get("name"):
+                run_cmd(f'git config --local user.name "{prof["name"]}"', cwd=target)
+            if prof.get("email"):
+                run_cmd(f'git config --local user.email "{prof["email"]}"', cwd=target)
             await query.answer(f"Identidad actualizada a {prof['label']}")
             text, markup = build_github_view()
             await safe_edit_message(query, text, reply_markup=markup)

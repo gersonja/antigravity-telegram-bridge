@@ -407,7 +407,7 @@ Todos los botones interactivos del bot operan mediante el protocolo `CallbackQue
 | `[ 🌿 Ramas ]` | `btn_branches` | `/status` | Ejecuta `build_branches_view()` y lista las ramas locales recientes. |
 | `[ 🔀 Cambiar a <Rama> ]` | `branch_co_<nombre>` | Selector de Ramas | Ejecuta `git checkout <nombre>` y confirma el cambio de rama activa. |
 | `[ 🐙 GitHub ]` | `btn_github` | `/status`, Proyectos | Despliega la tarjeta diagnóstica de Git y opciones de GitHub. |
-| `[ 🌐 Crear Repo en GitHub ]` | `gh_choose_create_profile` | Vista de GitHub | Permite elegir identidad (`gersonja` HTTPS o `gersoncastellanos` SSH) para crear repo. |
+| `[ 🌐 Crear Repo en GitHub ]` | `gh_choose_create_profile` | Vista de GitHub | Permite elegir identidad (Personal HTTPS o Trabajo SSH) para crear repo. |
 | `[ 👤 <Perfil> ]` | `gh_create_prof:<key>` | Asistente de Creación | Selecciona el perfil y solicita visibilidad (Privado o Público). |
 | `[ 🔒 Privado / 🌍 Público ]` | `gh_create_vis:...` | Asistente de Creación | Configura visibilidad y pregunta si usar nombre actual o personalizado. |
 | `[ 🚀 Crear con Nombre Actual ]` | `gh_create_do:...` | Asistente de Creación | Crea el repo en GitHub vía `gh` o SSH y vincula `origin`. |
@@ -608,8 +608,8 @@ flowchart TD
 
 3. **Arquitectura Multi-Identidad (Personal HTTPS vs. Global SSH):**
    - El bot soporta múltiples identidades configuradas en `.env` (`GITHUB_PROFILES`):
-     * **Personal (`gersonja`):** Autenticado vía GitHub CLI (`gh repo create`) con protocolo HTTPS (`https://github.com/gersonja/<repo>.git`).
-     * **Global / Trabajo (`gersoncastellanos`):** Autenticado vía SSH (`git@github.com:gersoncastellanos/<repo>.git`) utilizando la clave RSA configurada en el sistema.
+     * **Personal (HTTPS):** Autenticado vía GitHub CLI (`gh repo create`) con protocolo HTTPS (`https://github.com/<usuario>/<repo>.git`).
+     * **Global / Trabajo (SSH):** Autenticado vía SSH (`git@github.com:<usuario>/<repo>.git`) utilizando la clave SSH configurada en el sistema.
    - Al crear el repositorio remoto o cambiar de identidad, el puente configura `git config user.name` y `git config user.email` a nivel local en el repositorio, eliminando cualquier conflicto de autoría entre proyectos personales y profesionales.
 
 4. **Primer Commit Robusto (`do_first_commit`):**

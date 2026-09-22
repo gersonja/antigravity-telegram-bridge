@@ -102,14 +102,39 @@ El bot enviará una orden determinística que instruye a la IA a:
 
 ---
 
-### Escenario D: Error de Formato en Telegram (`Can't parse entities`)
+### Escenario D: Mensaje de Telegram congelado en "Antigravity trabajando..." (Auto-Terminación / Reinicio de Daemon)
+
+* **Síntoma:** El mensaje interactivo de progreso en Telegram se queda estancado en un paso particular (por ejemplo: `⏳ Paso activo: 💻 Terminal: Stop-Process -Id <pid>...`) o el contador de segundos se detiene y nunca se entrega el reporte final ni los botones, a pesar de que la tarea ya terminó.
+* **Causa Raíz:** 
+  1. Al darle a Antigravity permisos autónomos totales (`--dangerously-skip-permissions`), si el usuario le solicita modificar archivos del propio puente (`antigravity_bridge.py`), el agente puede asumir que debe reiniciar el servicio en segundo plano y ejecutar comandos como:
+     ```powershell
+     Stop-Process -Id <pid> -Force
+     ```
+  2. Si el `<pid>` liquidado corresponde al proceso padre `pythonw.exe` que mantiene la conexión con Telegram, el bot es eliminado abruptamente en memoria.
+  3. Al morir instantáneamente, el proceso **nunca puede llegar a las líneas finales de código** que eliminan el mensaje de estado y envían los botones de conclusión a Telegram.
+  4. Mientras tanto, el proceso de `agy` sigue corriendo de fondo, realiza commits/pushes y genera el resultado final, pero Telegram queda desasistido.
+* **Mecanismos de Protección Implementados:**
+  1. **Blindaje contra Auto-Terminación (PID Safety Guard):** El puente inyecta en cada prompt el PID activo del bot advirtiendo formalmente al agente que está estrictamente prohibido liquidar o reiniciar procesos `pythonw.exe` del puente.
+  2. **Persistencia de Tarea en Vuelo (`in_flight_task.json`):** Toda tarea activa guarda sus metadatos en disco al comenzar.
+  3. **Auto-Recuperación tras Reinicio (`recover_in_flight_task`):** Cuando el bot arranca, el hook `post_init_hook` comprueba si quedó una tarea inconclusa, limpia el mensaje congelado en Telegram, extrae el resultado del transcript y envía la respuesta automáticamente.
+  4. **Priorización Estricta de Telemetría CLI (`CLI_BRAIN_DIR`):** Evita que las ventanas abiertas en el IDE visual secuestren el tracker del bot.
+* **¿Cómo resolverlo si vuelve a ocurrir en tu móvil?**
+  - Simplemente envía a Telegram:
+    ```text
+    /recover
+    ```
+    (o `/recuperar`). El bot consultará de inmediato el cerebro local, extraerá la respuesta final del agente y te la enviará con todos sus botones táctiles (`🧠 Ver Plan`, `🔍 Ver Diff`, `✅ Commit & Push`).
+
+---
+
+### Escenario E: Error de Formato en Telegram (`Can't parse entities`)
 
 * **Causa:** Antigravity devuelve código con caracteres especiales (`_`, `*`, `[`, `` ` ``) que a veces rompen el parser de Markdown de Telegram.
 * **Solución Automática Integrada:** El puente implementa `safe_reply_message()` y `safe_edit_message()`. Si Telegram rechaza el formato Markdown, el bot realiza un **fallback automático instantáneo a texto plano**, garantizando que nunca te quedes sin recibir la respuesta.
 
 ---
 
-### Escenario E: Desconexión de Red o Corte de Energía en el Host
+### Escenario F: Desconexión de Red o Corte de Energía en el Host
 
 * **Si la laptop se desconecta del cargador o hay un corte de luz:**  
   El Watchdog de Batería (`ANTIGRAVITY_WATCHDOG_ENABLED=true`) detecta el cambio de estado en la API Win32 y te envía de inmediato una alerta de emergencia:

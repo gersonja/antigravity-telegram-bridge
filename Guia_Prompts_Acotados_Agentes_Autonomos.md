@@ -79,6 +79,7 @@ Incluir una o dos de estas frases al final de tus mensajes de Telegram cambia la
 | **`"No ejecutes pruebas de integración contra APIs externas."`** | Evita llamadas accidentales a pasarelas de pago, servicios gubernamentales (SRI), correos o SMS. |
 | **`"No instales dependencias nuevas de npm/pip."`** | Evita que el agente descargue librerías pesadas para resolver algo que ya se podía solucionar con código nativo. |
 | **`"No hagas commit ni push."`** | Deja los cambios en el árbol local para que tú los revises con `[ 🔍 Ver Diff ]` antes de mandarlos a producción. |
+| **`"No intentes reiniciar el servicio del bot."`** *(Nativo)* | Aunque el puente cuenta con *PID Safety Guard* a nivel de sistema que bloquea `Stop-Process` o `taskkill`, acotarlo explícitamente evita que el agente intente scripts de auto-reinicio. |
 
 ---
 

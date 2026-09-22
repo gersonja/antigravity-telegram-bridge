@@ -265,6 +265,14 @@ El comando y botón de diff cuentan con un motor dual que resuelve el problema d
 
 ## 10. Robustez Técnica y Manejo de Errores
 
+- **PID Safety Guard (Blindaje Anti-Autodestrucción de Proceso):**  
+  Dado que `agy` opera con `--dangerously-skip-permissions` para una autonomía fluida, un agente con permisos de terminal podría intentar ejecutar `Stop-Process` o `taskkill` sobre el propio proceso del puente (`pythonw.exe`) si modifica su código fuente. Para erradicar este riesgo, el puente inyecta dinámicamente en el prompt de sistema una regla inviolable con el PID exacto del bot (`os.getpid()`), prohibiendo tajantemente su terminación por PowerShell o comandos de consola y ordenándole notificar al usuario para un reinicio controlado.
+- **Persistencia de Tareas en Vuelo y Rescate Automático (`in_flight_task.json`):**  
+  Al iniciar cualquier ejecución se guarda de forma atómica en disco (`in_flight_task.json`) el ID de conversación, el ID del chat, el ID del mensaje de estado de Telegram y la marca temporal. Si el equipo se apaga, se suspende o el proceso cae, la función `post_init_hook()` al arrancar lee el archivo de vuelo, inspecciona el `transcript.jsonl`, extrae el resultado final o error y lo envía inmediatamente a Telegram, eliminando para siempre mensajes congelados como *"Antigravity trabajando..."*.
+- **Comando de Recuperación Manual (`/recover` y `/recuperar`):**  
+  Permite al usuario forzar la inspección y rescate de cualquier tarea activa registrada en disco en cualquier momento, entregando la última respuesta del modelo o limpiando estados residuales si la tarea ya concluyó.
+- **Priorización Estricta de Telemetría CLI (`CLI_BRAIN_DIR`):**  
+  Para el seguimiento de eventos y progreso en vivo de la tarea en ejecución, el puente prioriza `~/.gemini/antigravity-cli/brain/` sobre `antigravity-ide/brain/`. Esto evita que chats concurrentes abiertos en el Antigravity IDE del escritorio capturen o confundan la telemetría en tiempo real del agente remoto.
 - **Motor Guiado por Pasos Activos (Zero Timeouts Arbitrarios):**  
   Eliminación de cortes fijos (como el antiguo timeout de 300s). El puente implementa un *Idle Watchdog* (`STEP_IDLE_TIMEOUT = 600s`) que monitorea `transcript.jsonl` y resetea continuamente el contador a cero cada vez que el agente cambia de paso o edita un archivo. Ofrece hasta 10 minutos completos de inactividad por paso para dar máxima holgura a compilaciones pesadas y reintentos de red.
 - **Detección Proactiva de Respuesta Final del Modelo:**  

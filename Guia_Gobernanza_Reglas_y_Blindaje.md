@@ -74,15 +74,19 @@ Este documento define las directrices y fronteras operativas no negociables para
 - PROHIBIDO imprimir en los logs o respuestas el contenido de archivos `.env`, llaves privadas (`.p12`, `.pem`), secretos JWT o contraseñas de bases de datos.
 - Si necesitas usar una variable de entorno nueva, documenta su nombre en `.env.example` con un valor ficticio. Jamás la expongas en commits.
 
-## 5. INVARIANTE: Fronteras de Archivos y Dependencias
-- Limítate a modificar exclusivamente los archivos relacionados con el objetivo solicitado.
-- No realices refactorizaciones no solicitadas en archivos adyacentes ("si no está roto, no lo toques").
+## 5. INVARIANTE: Minimalismo y Respeto a las Fronteras de Código
+- Modifica ÚNICAMENTE los archivos indispensables para cumplir la tarea asignada.
+- No realices refactorizaciones no solicitadas en módulos periféricos.
 - No instales dependencias pesadas de `npm` o `pip` sin justificación técnica imprescindible. Prefiere utilidades nativas del lenguaje.
+
+## 6. INVARIANTE: Protección del Proceso Anfitrión y Daemon Móvil
+- PROHIBIDO terminantemente ejecutar comandos de consola que liquiden procesos (`Stop-Process`, `taskkill /F /PID`, `kill -9`) dirigidos al PID del daemon de Telegram (`pythonw.exe`) o a scripts relacionados con `antigravity_bridge.py`.
+- El agente actúa como un subproceso subordinado y bajo ninguna circunstancia debe intentar reiniciar el proceso coordinador del que depende su reporte hacia el usuario móvil.
 ```
 
 ---
 
-## 4. Los 5 Errores Fatales que Previene este Blindaje
+## 4. Los 6 Errores Fatales que Previene este Blindaje
 
 A continuación se detallan desastres reales ocurridos en desarrollo autónomo que quedan **100% neutralizados** con esta configuración:
 
@@ -93,6 +97,7 @@ A continuación se detallan desastres reales ocurridos en desarrollo autónomo q
 | **Destrucción de la BD Local** | La migración da un conflicto. El agente "útil" ejecuta `prisma migrate reset` borrando todas las tablas y datos de prueba locales. | **Invariante 3:** Comandos destructivos vetados en la constitución. |
 | **Filtración de Llaves Privadas** | El agente pega el contenido de un `.env` o una clave `.p12` en el chat de Telegram o en el mensaje del commit de Git. | **Invariante 4:** Cláusula de confidencialidad estricta para secretos. |
 | **Sobre-Refactorización Innecesaria** | Pides arreglar un botón y el agente decide "modernizar" 35 archivos de componentes que nadie le pidió tocar. | **Invariante 5:** Fronteras de archivo cerradas y respeto al código legado. |
+| **Suicidio del Daemon de Telegram** | El agente modifica un script del bot y decide "reiniciar el daemon" ejecutando `Stop-Process` sobre el PID padre. Mata al bot que lo está escuchando y Telegram queda congelado. | **Invariante 6 & PID Guard:** Prohibición estricta de auto-terminación con inyección dinámica del PID activo y auto-recuperación tras reinicio. |
 
 ---
 
@@ -114,17 +119,19 @@ Al cambiar de proyecto en Telegram con `/projects`, **`agy` adopta instantáneam
 
 ## 6. Blindaje Nativo a Nivel de Infraestructura (Salvaguardas del Bridge)
 
-Además de la constitución ética inyectada en el LLM, el propio puente en Python implementa **cuatro compuertas de seguridad a nivel de sistema operativo**:
+Además de la constitución ética inyectada en el LLM, el propio puente en Python implementa **cinco compuertas de seguridad a nivel de sistema operativo**:
 
-1. **Doble Compuerta en Turbo AutoPush:**  
+1. **PID Safety Guard (Blindaje Anti-Autodestrucción):**  
+   El puente inyecta en cada llamada a `agy` una regla de sistema inviolable con el PID exacto del proceso `pythonw.exe` del bridge, prohibiendo terminantemente comandos como `Stop-Process -Id <pid>` o `taskkill`. Si el agente modifica código del bridge, debe limitarse a editar los archivos y solicitar al usuario reiniciar el servicio.
+2. **Doble Compuerta en Turbo AutoPush:**  
    - *Compuerta 1:* Si la tarea concluye con código distinto de cero (`code != 0`), timeout o cancelación por el usuario, AutoPush **se aborta inmediatamente**.
-   - *Compuerta 2 (Aislamiento de Sesión):* AutoPush consulta `transcript.jsonl`. Si el agente no tocó ningún archivo de código (por ejemplo, si solo analizó arquitectura o redactó un plan), AutoPush **no toca Git**, protegiendo cualquier archivo o cambio que tú tuvieras abierto manualmente en el IDE de tu computadora.
-2. **Protocolo de Parada Forzada (`stop_task_now`):**  
-   Al enviar `/stop` o presionar `[ 🛑 Detener Tarea ]`, no solo se envía SIGTERM; se ejecuta `taskkill /F /T` sobre el árbol de procesos, se barre cualquier instancia huérfana de `agy.exe` y se fija `was_cancelled = True`, anulando de inmediato reintentos de cascada y envíos accidentales a Git.
-3. **Guardián de Modo Plan Estricto (Bloqueo de Auto-Aprobación):**  
-   Neutraliza el gancho interno del CLI (`Stop hook blocked termination: The user has automatically approved the artifact`) forzando la detención obligatoria tras entregar `implementation_plan.md`.
-4. **Smart Plan Approval:**  
-   La ejecución física de código tras una fase de diseño exige una confirmación humana explícita (*"Aprobado"*, `/approve` o botón `[ ▶️ Ejecutar Plan ]`), conmutando a modo directo de forma transparente y controlada.
+   - *Compuerta 2:* Si `len(session_modified_files) == 0` (el agente no tocó archivos de código en esta sesión), AutoPush no commitea nada, protegiendo cambios externos en el IDE.
+3. **Persistencia de Tarea en Vuelo (`in_flight_task.json`) y Auto-Recuperación:**  
+   Al lanzar una tarea se persiste su `conversation_id`, `chat_id` y `status_message_id`. Si la máquina se reinicia o el proceso cae, al reencender, `post_init_hook` analiza el `transcript.jsonl`, extrae el resultado y lo entrega a Telegram, eliminando mensajes colgados.
+4. **Priorización Estricta de Telemetría CLI (`CLI_BRAIN_DIR`):**  
+   El puente busca primero en `~/.gemini/antigravity-cli/brain/` y solo si no existe recurre al IDE. Esto evita que sesiones abiertas de Antigravity IDE capturen la telemetría de una orden remota.
+5. **Protocolo de Parada Forzada (`stop_task_now` / Cancelación Atómica):**  
+   Al presionar el botón `[ ⏹️ Detener ]` o emitir `/stop`, se mata el árbol de subprocesos del agente (`taskkill /F /T /PID <pid>`), se resetea el flag de ejecución y se limpia el archivo de tarea en vuelo de forma atómica.
 
 ---
 

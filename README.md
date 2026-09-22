@@ -116,6 +116,13 @@ graph TD
 - Envía capturas de pantalla de bugs, interfaces desalineadas o fotos a Telegram.
 - El bot las descarga en alta resolución y las analiza con la visión multimodal de Antigravity.
 
+### 13. 🛡️ Blindaje de Supervivencia del Daemon y Auto-Recuperación de Tareas en Vuelo (`/recover`)
+- **Blindaje contra Auto-Terminación (PID Safety Guard):** Al otorgar permisos autónomos a agentes de IA para ejecutar comandos de PowerShell/terminal, existe el riesgo de que el agente intente reiniciar el servicio ejecutando `Stop-Process` o `taskkill` sobre su propio proceso padre (`pythonw.exe`). Para erradicar de raíz este "suicidio del daemon", el puente inyecta dinámicamente en el prompt de sistema el PID activo del bot con una **regla de supervivencia inviolable** que prohíbe terminar al proceso coordinador.
+- **Vigilante de Tareas en Vuelo (`in_flight_task.json`):** Cada tarea iniciada registra inmediatamente su estado volátil en disco (chat ID, mensaje de estado en Telegram, timestamp, modelo y sesión).
+- **Auto-Recuperación tras Reinicio (`recover_in_flight_task`):** Si la máquina sufre un corte de energía, Windows se reinicia o el servicio se interrumpe abruptamente durante la ejecución de Antigravity, al arrancar de nuevo el bot detecta la tarea pendiente, elimina el mensaje congelado en Telegram, extrae el resultado final emitido en el transcript del cerebro (`brain/`) y lo entrega automáticamente al usuario con todos los botones de acción (`🧠 Ver Plan`, `🔍 Ver Diff`, `✅ Commit & Push`).
+- **Priorización Estricta de Telemetría CLI (`CLI_BRAIN_DIR`):** Corrige desincronizaciones de telemetría asegurando que el puente monitoree fielmente el directorio del CLI de Antigravity, evitando que conversaciones abiertas simultáneamente en el IDE visual secuestren el estado o el paso activo.
+- **Comando Manual de Rescate (`/recover` o `/recuperar`):** Permite al usuario en cualquier momento forzar la lectura e informe del último resultado completado si Telegram experimentó desconexión o desincronización.
+
 ---
 
 ## 🛠️ Requisitos Previos
@@ -233,6 +240,7 @@ pwsh -File install_bot_service.ps1
 | `/session <id>` | Salto directo a una sesión por su identificador UUID. | Ficha de sesión. |
 | `/exit_session` o `/new` | Sale de la sesión activa y activa el *Modo Hilo Limpio*. | `[ 💬 Entrar a Sesión ]` |
 | `/stop` o `/cancel` | **Detención forzada inmediata:** Mata de inmediato el subproceso, hace barrido de huérfanos y bloquea AutoPush/reintentos. | `[ 🛑 Detener / Cancelar Tarea ]` |
+| `/recover` o `/recuperar` | **Recuperación manual:** Recupera y envía el último resultado completado si Telegram se desincronizó o el bot se reinició. | Respuesta recuperada + botones. |
 | `/continue` o `/continuar` | **Reanuda la tarea interrumpida:** Retoma el trabajo exactamente donde quedó con prompt determinístico (solo disponible ante caídas/timeouts). | `[ ▶️ Continuar Tarea ]` *(solo en fallos)* |
 | `/plan [tarea]` | **Atajo:** Genera plan de arquitectura formal bajo demanda o muestra el `implementation_plan.md` actual. | `[ ▶️ Ejecutar Plan ]` |
 | `/approve`, `/aprobar`, `/exec`, `/ejecutar` | **Aprueba y ejecuta:** Desbloquea automáticamente el modo directo y comienza a aplicar el plan de arquitectura. | Ejecución inmediata. |
@@ -271,6 +279,7 @@ pwsh -File install_bot_service.ps1
 | `ANTIGRAVITY_WATCHDOG_INTERVAL` | Segundos entre chequeos del estado de energía. | `45` |
 | `ANTIGRAVITY_DEFAULT_HEALTH_URL` | URL de prueba predeterminada para el comando `/health`. | `https://ejemplo.com` |
 | `ANTIGRAVITY_STATE_FILE` | Ruta del archivo JSON para persistencia de estado. | `bot_state.json` |
+| `ANTIGRAVITY_IN_FLIGHT_TASK_FILE` | Archivo JSON para persistir tareas en vuelo y auto-recuperarlas si el bot se reinicia. | `in_flight_task.json` |
 
 ---
 

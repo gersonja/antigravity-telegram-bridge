@@ -61,14 +61,26 @@ flowchart TD
     end
 ```
 
-### Persistencia de Estado (`bot_state.json`)
-El archivo `bot_state.json` reside en el directorio de trabajo del bot y preserva la configuración operativa entre reinicios:
+### Persistencia de Estado (`bot_state.json` e `in_flight_task.json`)
+El puente utiliza dos mecanismos complementarios de persistencia en disco:
+
+1. **`bot_state.json` (Estado Operativo Global):** Reside en el directorio base del bot y preserva la configuración operativa entre reinicios:
 * `current_project`: Ruta absoluta del repositorio activo (`str` o `null`).
 * `active_session_id`: UUID de la conversación activa (`str` o `null` para Modo Hilo Limpio).
 * `active_session_title`: Título legible de la sesión activa (`str` o `null`).
 * `model`: Modelo de IA seleccionado (`"auto"`, `"gemini-3.8-flash-high"`, etc.).
 * `execution_mode`: Modo de ejecución (`"accept-edits"` o `"plan"`).
 * `autopush`: Bandera booleana de commit y push automático (`true` o `false`).
+
+2. **`in_flight_task.json` (Vigilante de Tarea Activa en Vuelo):** Archivo efímero creado en el instante exacto en que Antigravity comienza a procesar una orden y eliminado cuando concluye o se cancela. Registra:
+* `chat_id`: Identificador de Telegram donde se debe reportar.
+* `status_msg_id`: ID del mensaje interactivo de telemetría en tiempo real.
+* `start_time`: Timestamp de inicio para calcular duraciones.
+* `prompt`: Requerimiento original del usuario.
+* `target_session`: Identificador UUID de la conversación.
+* `project`: Ruta del proyecto activo.
+* `model`: Modelo de IA utilizado.
+* **Propósito:** Si el daemon o la máquina se reinician abruptamente durante una ejecución pesada, el hook `recover_in_flight_task()` detecta este archivo al arrancar, limpia el mensaje congelado en Telegram, extrae el resultado del transcript y entrega la respuesta final sin pérdida de información.
 
 ---
 
@@ -199,6 +211,16 @@ El archivo `bot_state.json` reside en el directorio de trabajo del bot y preserv
   2. Inyecta el prompt determinístico `CONTINUE_TASK_PROMPT`:
      > *"Continúa con la tarea inmediatamente donde la dejaste. Inspecciona los archivos modificados y el progreso previo en el cerebro/transcript. NO repitas trabajo ya completado; procede directamente con el siguiente paso pendiente hasta concluir la meta."*
   3. `agy` retoma la sesión directamente desde el estado guardado en su base de datos SQLite y `transcript.jsonl`.
+
+#### 11. `/recover`, `/recuperar`
+* **Descripción:** Protocolo de recuperación manual de resultados. Si el bot se reinició, la laptop se suspendió o el mensaje de Telegram quedó desincronizado mientras Antigravity trabajaba, este comando fuerza la inspección del cerebro local y envía el último informe completado.
+* **Manejador interno:** `cmd_recover(update, context)`
+* **Acciones internas ejecutadas:**
+  1. Identifica la sesión activa o, en su defecto, detecta la carpeta más reciente en `~/.gemini/antigravity-cli/brain/` mediante `get_newest_brain_session_id(preferred_root=CLI_BRAIN_DIR)`.
+  2. Lee el último `PLANNER_RESPONSE` completo sin llamadas a herramientas desde `transcript.jsonl`.
+  3. Actualiza y persiste la sesión en `bot_state.json` y sincroniza hacia el entorno del IDE con `sync_cli_to_ide()`.
+  4. Inspecciona cambios pendientes en Git (`git diff --stat`) y presencia de planes/walkthroughs.
+  5. Envía a Telegram el informe formateado completo junto a la botonera de acciones (`🧠 Ver Plan`, `🔍 Ver Diff`, `✅ Commit & Push`, `📊 Panel de Estado`).
 
 ---
 
@@ -516,6 +538,14 @@ Durante la ejecución de cualquier tarea, el usuario dispone de visibilidad y co
    - Al pulsar el botón de detención o enviar `/stop`, se lanza `kill_process_tree()` sobre el PID principal.
    - Se ejecuta inmediatamente un barrido del sistema: `taskkill /F /IM agy.exe /T` para eliminar cualquier subproceso huérfano.
    - Se marca `was_cancelled = True`, lo que impide que AutoPush intente commitear código incompleto.
+4. **Blindaje contra Auto-Terminación (PID Safety Guard):**
+   - Para evitar que agentes autónomos que ejecutan scripts de terminal maten por accidente al propio proceso de Python que los coordina (`pythonw.exe`), el puente inyecta en cada prompt el PID activo del bot:
+     > `[SISTEMA - REGLA CRÍTICA DE OPERACIÓN - PROHIBICIÓN DE AUTO-TERMINACIÓN]: NUNCA ejecutes Stop-Process o taskkill sobre el PID <actual> ni sobre pythonw.exe de remote_bot. Matar el proceso padre congela la comunicación con Telegram.`
+5. **Auto-Recuperación tras Reinicio (`recover_in_flight_task`):**
+   - El hook de inicialización (`post_init_hook`) comprueba la presencia de `in_flight_task.json`.
+   - Si detecta que la instancia anterior murió o la máquina se reinició a mitad de una tarea, extrae el resultado del transcript y lo entrega automáticamente en Telegram.
+6. **Priorización Estricta de Telemetría CLI (`CLI_BRAIN_DIR`):**
+   - La telemetría en tiempo real consulta preferentemente las carpetas de `antigravity-cli`, evitando que la actividad simultánea de ventanas en el IDE de escritorio altere o secuestre el monitoreo del bot móvil.
 
 ---
 

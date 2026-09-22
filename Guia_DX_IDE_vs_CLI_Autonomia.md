@@ -222,7 +222,7 @@ El bot incluye telemetría Win32 (`/battery` y Watchdog de Energía). Si hay un 
 ## 8. Resumen de Buenas Prácticas para Usuarios de este Repositorio
 
 1. **Entiende el valor de los 1000 segundos:** Cuando `agy` tarda 15 minutos en el bot, no está "congelado"; está haciendo el trabajo pesado que un desarrollador humano haría en media hora de investigación, refactorización y depuración autónoma.
-2. **Confía en el Idle Watchdog:** El sistema cuenta con un vigilante de inactividad de 600 segundos por paso (`STEP_IDLE_TIMEOUT`). Si el agente sigue cambiando de paso, déjalo trabajar; está resolviendo la misión.
+2. **Confía en el Idle Watchdog y el Blindaje de Recuperación:** El sistema cuenta con un vigilante de inactividad de 600 segundos por paso (`STEP_IDLE_TIMEOUT`), blindaje de proceso inviolable (PID Safety Guard) y persistencia atómica de tareas en vuelo (`in_flight_task.json`). Si el agente sigue cambiando de paso, déjalo trabajar; está resolviendo la misión. Si por cualquier motivo el proceso se reinicia o se pierde energía, el bot auto-recupera la tarea en el siguiente arranque o puedes auditarla manualmente con `/recover`.
 3. **El Modo Directo es el estándar:** Mantén el bot en `⚡ Directo (accept-edits)` para que `agy` complete su bucle ReAct de auto-reparación. Usa `/plan` exclusivamente cuando desees un documento previo de diseño.
 4. **Acota tus requerimientos:** Aplica los principios de la [Guía de Prompting Acotado](Guia_Prompts_Acotados_Agentes_Autonomos.md) para concentrar la potencia de `agy` en segundos.
 5. **Protege tu proyecto con reglas:** No hardcodees restricciones en el bot de Telegram; colócalas en las reglas de tu propio repositorio (`.ai/rules/constitution.md`) para que apliquen tanto en el bot como en el IDE.
